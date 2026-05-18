@@ -20,12 +20,16 @@ import time
 from typing import Optional
 
 from .config import DataSvcConfig, Feed
+from .db.audit import audit_integrity, format_audit
 from .fetcher import DataFetchError, DataFetcher, bar_secs
 from .tab_pin import TabPinError
 
 
 _MIN_SLEEP_S = 5.0
 _BAR_CLOSE_GRACE_S = 5.0
+# Service-internal cron for the integrity audit (gap + off-grid scan).
+# Runs once per day after a poll cycle completes; pure read-only — no auto-fix.
+_AUDIT_INTERVAL_S = 86400.0  # 24h
 
 
 def _setup_logging() -> None:
@@ -80,6 +84,7 @@ def main() -> None:
     last_ts: dict[tuple[str, str], Optional[int]] = {
         (f.symbol, f.timeframe): None for f in cfg.feeds
     }
+    last_audit_ts: float = 0.0  # fires at first cycle, then every 24h
 
     while True:
         for feed in cfg.feeds:
@@ -106,6 +111,18 @@ def main() -> None:
             except Exception as exc:
                 logger.error("[%s/%s] unexpected error: %s",
                              feed.symbol, feed.timeframe, exc, exc_info=True)
+
+        # Service-internal cron: integrity audit once per day.
+        now = time.time()
+        if now - last_audit_ts >= _AUDIT_INTERVAL_S:
+            try:
+                report = audit_integrity(cfg.postgres_url)
+                level = logging.WARNING if report.problems else logging.INFO
+                for line in format_audit(report).splitlines():
+                    logger.log(level, line)
+            except Exception:
+                logger.exception("[AUDIT] integrity audit failed")
+            last_audit_ts = now
 
         _sleep_until_next_event(cfg.feeds, fetcher, cfg.poll_interval_s)
 

@@ -57,12 +57,31 @@ _TF_SECONDS: dict[str, int] = {
     "D": 86400, "1D": 86400, "W": 604800, "1W": 604800,
 }
 
+# Binance weekly bars start at Monday 00:00 UTC.
+# Unix epoch (1970-01-01) is a Thursday → Monday is 4 days = 345600 s away.
+# All other timeframes align cleanly to the unix epoch (ts % secs == 0).
+_TF_EPOCH_OFFSET: dict[str, int] = {"W": 345600, "1W": 345600}
+
 
 def _tf_seconds(timeframe: str) -> int:
     s = _TF_SECONDS.get(timeframe)
     if s is None:
         raise ValueError(f"Unknown timeframe: {timeframe!r}")
     return s
+
+
+def _ts_aligned(ts: int, timeframe: str) -> bool:
+    """True iff `ts` falls on the natural grid for `timeframe`.
+
+    Binance's exchange convention drives the alignment:
+      • Intraday timeframes (1–4h) align to the unix epoch (ts % secs == 0).
+      • Daily bars open at 00:00 UTC (same rule).
+      • Weekly bars open Monday 00:00 UTC, which is offset 4 days from the
+        Thursday-epoch — hence the dedicated offset entry.
+    """
+    secs = _tf_seconds(timeframe)
+    offset = _TF_EPOCH_OFFSET.get(timeframe, 0)
+    return (ts - offset) % secs == 0
 
 
 class BarCache:
@@ -243,6 +262,23 @@ class BarCache:
                     symbol, timeframe, last_close, fresh_close, drift * 100,
                 )
                 return
+
+        # Cross-symbol leak guard, layer 3 — timeframe-grid alignment.
+        # Sub-grid timestamps (e.g. /30 bars at :30 leaking into a /1h cache)
+        # are silent on the price-band + drift checks but corrupt indicator
+        # calculations on read. Reject any incoming bar whose ts doesn't fall
+        # on the natural grid for this timeframe.
+        misaligned = [
+            int(t) for t in closed_df["time"].astype(int) if not _ts_aligned(int(t), timeframe)
+        ]
+        if misaligned:
+            sample = misaligned[:3]
+            logger.error(
+                "[cache] alignment violation for %s/%s: %d/%d incoming bars off-grid "
+                "(sample_ts=%s) — REJECTING insert",
+                symbol, timeframe, len(misaligned), len(closed_df), sample,
+            )
+            return
 
         rows = [
             (
