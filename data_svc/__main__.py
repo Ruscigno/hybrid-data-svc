@@ -65,11 +65,16 @@ def main() -> None:
     _setup_logging()
 
     cfg = DataSvcConfig.from_env()
+    cdp_origin = (
+        f"{cfg.cdp_host}:{cfg.cdp_port} (env)"
+        if cfg.cdp_host is not None and cfg.cdp_port is not None
+        else "auto-discover"
+    )
     logger.info(
-        "data-svc starting — %d feed(s) — pg=%s — cdp=%s:%d",
+        "data-svc starting — %d feed(s) — pg=%s — cdp=%s",
         len(cfg.feeds),
         cfg.postgres_url.split("@")[-1] if "@" in cfg.postgres_url else "<redacted>",
-        cfg.cdp_host, cfg.cdp_port,
+        cdp_origin,
     )
     for feed in cfg.feeds:
         logger.info("  %s/%s  tv=%s  bar=%.0fs",

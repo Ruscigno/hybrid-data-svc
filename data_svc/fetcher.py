@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import time
+from typing import Optional
 
 import pandas as pd
 
@@ -46,11 +48,33 @@ def bar_secs(timeframe: str) -> int:
     return s
 
 
-def _tv_switch(tv_symbol: str, timeframe: str, tv_cli: str) -> None:
+def _tv_env(host: Optional[str], port: Optional[int]) -> Optional[dict]:
+    """Build the env passed to the tv CLI subprocess.
+
+    When (host, port) are known, set CDP_HOST/CDP_PORT explicitly so the Node
+    tv CLI uses them directly instead of running its own discovery on every
+    call (wasteful, and could race the data-svc parent).
+    Returns None when both are unset — subprocess inherits process env as-is.
+    """
+    if host is None and port is None:
+        return None
+    env = dict(os.environ)
+    if host is not None:
+        env["CDP_HOST"] = str(host)
+    if port is not None:
+        env["CDP_PORT"] = str(port)
+    return env
+
+
+def _tv_switch(tv_symbol: str, timeframe: str, tv_cli: str,
+               tv_env: Optional[dict] = None) -> None:
     tf_tv = _TF_TO_TV.get(timeframe, timeframe)
     for subcmd, arg in [("symbol", tv_symbol), ("timeframe", tf_tv)]:
         try:
-            result = subprocess.run([tv_cli, subcmd, arg], capture_output=True, text=True, timeout=15)
+            result = subprocess.run(
+                [tv_cli, subcmd, arg], capture_output=True, text=True,
+                timeout=15, env=tv_env,
+            )
         except subprocess.TimeoutExpired:
             raise DataFetchError(f"tv {subcmd} switch timed out for {arg!r}")
         if result.returncode != 0:
@@ -63,10 +87,12 @@ def _tv_switch(tv_symbol: str, timeframe: str, tv_cli: str) -> None:
             raise DataFetchError(f"tv {subcmd} returned failure: {data}")
 
 
-def _tv_fetch(count: int, tv_cli: str) -> pd.DataFrame:
+def _tv_fetch(count: int, tv_cli: str, tv_env: Optional[dict] = None) -> pd.DataFrame:
     cmd = [tv_cli, "ohlcv", "-n", str(min(count, 500))]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=tv_env,
+        )
     except subprocess.TimeoutExpired:
         raise DataFetchError(f"tv CLI timed out: {' '.join(cmd)}")
     except FileNotFoundError:
@@ -119,7 +145,14 @@ class DataFetcher:
         primary = cfg.feeds[0] if cfg.feeds else Feed(cfg.symbol, cfg.timeframe, cfg.tv_symbol)
         self._chart_tv_symbol: str = primary.tv_symbol
         self._chart_timeframe: str = primary.timeframe
-        self._tab_pin = TabPin(host=cfg.cdp_host, port=cfg.cdp_port)
+        # Resolve CDP endpoint once at boot (env override or discovery), then
+        # pass it to TabPin AND to every tv-CLI subprocess so the Node side
+        # uses the same port without re-running discovery on each call.
+        host, port = cfg.resolve_cdp()
+        self._cdp_host: str = host
+        self._cdp_port: int = port
+        self._tv_env = _tv_env(host, port)
+        self._tab_pin = TabPin(host=host, port=port)
         self._tab_pin.resolve()
 
     @property
@@ -147,13 +180,13 @@ class DataFetcher:
 
         if feed.tv_symbol != self._chart_tv_symbol or feed.timeframe != self._chart_timeframe:
             logger.info("[%s/%s] switching chart → %s", feed.symbol, feed.timeframe, feed.tv_symbol)
-            _tv_switch(feed.tv_symbol, feed.timeframe, self._cfg.tv_cli)
+            _tv_switch(feed.tv_symbol, feed.timeframe, self._cfg.tv_cli, tv_env=self._tv_env)
             self._chart_tv_symbol = feed.tv_symbol
             self._chart_timeframe = feed.timeframe
             time.sleep(3)
 
         def _fetcher(_sym: str, _tf: str, cnt: int) -> pd.DataFrame:
-            df = _tv_fetch(cnt, self._cfg.tv_cli)
+            df = _tv_fetch(cnt, self._cfg.tv_cli, tv_env=self._tv_env)
             # Verify-after-fetch: catch chart-switch race where tv ohlcv returns
             # bars from the pre-switch symbol. PLAUSIBLE_RANGES catches gross
             # mismatches; BarCache._insert_bars has additional drift + band guards.

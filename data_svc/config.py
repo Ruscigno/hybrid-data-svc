@@ -48,9 +48,22 @@ class DataSvcConfig:
     poll_interval_s: float = 30.0
     postgres_url: str = "postgresql://datasvc:datasvc@postgres:5432/datasvc"
     tv_cli: str = "tv"
-    cdp_host: str = "localhost"
-    cdp_port: int = 9222
+    # CDP host/port: None triggers intelligent discovery (see data_svc.cdp_discover).
+    # Operator can still pin via env CDP_HOST / CDP_PORT to bypass discovery.
+    cdp_host: Optional[str] = None
+    cdp_port: Optional[int] = None
     grpc_listen: str = "0.0.0.0:50051"
+
+    def resolve_cdp(self) -> tuple[str, int]:
+        """Return (host, port) for the TV CDP endpoint.
+
+        Honors explicit cdp_host/cdp_port if set; otherwise runs
+        cdp_discover.discover_cdp() which probes the cache + port range.
+        """
+        from .cdp_discover import discover_cdp
+        if self.cdp_host is not None and self.cdp_port is not None:
+            return self.cdp_host, self.cdp_port
+        return discover_cdp()
 
     @classmethod
     def from_env(cls) -> DataSvcConfig:
@@ -70,7 +83,9 @@ class DataSvcConfig:
                 "postgresql://datasvc:datasvc@postgres:5432/datasvc",
             ),
             tv_cli=os.getenv("TV_CLI", "tv"),
-            cdp_host=os.getenv("CDP_HOST", "localhost"),
-            cdp_port=int(os.getenv("CDP_PORT", "9222")),
+            # Leave host/port as None when the env doesn't pin them — that
+            # opts into auto-discovery via data_svc.cdp_discover.
+            cdp_host=os.getenv("CDP_HOST") or None,
+            cdp_port=int(os.getenv("CDP_PORT")) if os.getenv("CDP_PORT") else None,
             grpc_listen=os.getenv("GRPC_LISTEN", "0.0.0.0:50051"),
         )

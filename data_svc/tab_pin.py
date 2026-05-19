@@ -38,7 +38,14 @@ class PinnedTab:
 
 
 class TabPin:
-    def __init__(self, host: str = "localhost", port: int = 9222, timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        timeout: float = 5.0,
+    ) -> None:
+        # host/port may be None — that opts into discovery via cdp_discover
+        # at resolve() time (lazy, so unit tests don't need a live CDP).
         self._host = host
         self._port = port
         self._timeout = timeout
@@ -48,8 +55,18 @@ class TabPin:
     def pinned(self) -> Optional[PinnedTab]:
         return self._pinned
 
+    def _ensure_endpoint(self) -> None:
+        if self._host is not None and self._port is not None:
+            return
+        # Lazy import — keeps tab_pin importable without cdp_discover (e.g. in tests).
+        from .cdp_discover import discover_cdp
+        host, port = discover_cdp()
+        self._host = host
+        self._port = port
+
     def resolve(self) -> PinnedTab:
         """Pin to the currently-active chart tab (first chart target in z-order)."""
+        self._ensure_endpoint()
         targets = self._list_targets()
         chart = next(
             (t for t in targets if t.get("type") == "page" and _CHART_URL_RE in t.get("url", "").lower()),
@@ -76,6 +93,9 @@ class TabPin:
         """Bring the pinned tab to focus before a TV call. Raises if the tab is gone."""
         if self._pinned is None:
             raise TabPinError("TabPin.activate() called before resolve()")
+        # resolve() was already called, so host/port are already set; but
+        # _ensure_endpoint is idempotent and cheap when they are set.
+        self._ensure_endpoint()
 
         targets = self._list_targets()
         if not any(t.get("id") == self._pinned.id for t in targets):
