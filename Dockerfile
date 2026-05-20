@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && \
 #   - cdp_discover.js (new): intelligent CDP port discovery (cache + scan).
 #   - connection.js (modified): uses discoverCdp() instead of hardcoded port.
 #   - core/tab.js (modified): same, deletes the duplicated CDP_HOST/CDP_PORT constants.
+#   - cli/router.js (modified): drain stdout before process.exit() so large
+#     payloads aren't truncated when stdout is a pipe (see BUG_tv_non_json.md).
 # The upstream submodule stays untouched; the patched files live in our repo
 # (data_svc/patches/) and are mirrored from trading/external/tradingview-mcp
 # via scripts/check-patch-parity.sh — see README for the parity contract.
@@ -18,6 +20,7 @@ COPY external/tradingview-mcp/ /opt/tradingview-mcp/
 COPY data_svc/patches/cdp_discover.js /opt/tradingview-mcp/src/cdp_discover.js
 COPY data_svc/patches/connection.js   /opt/tradingview-mcp/src/connection.js
 COPY data_svc/patches/core_tab.js     /opt/tradingview-mcp/src/core/tab.js
+COPY data_svc/patches/cli_router.js   /opt/tradingview-mcp/src/cli/router.js
 RUN cd /opt/tradingview-mcp && npm install --omit=dev && npm link
 
 # Python service

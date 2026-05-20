@@ -8,7 +8,8 @@ Validation flow (called on every fetch):
      b. Find the overlap bar: the most recent cached bar (ts == last_bar_ts).
      c. Compare overlap bar close price (tolerance 0.001%).
         - Match  → insert only new bars, update meta.
-        - Mismatch → invalidate all rows for (symbol, timeframe), full refetch.
+        - Mismatch → full refetch, then upsert (ON CONFLICT DO UPDATE rewrites
+          the divergent bars in place; deep history is preserved, never DELETEd).
      d. Return latest `count` rows from DB.
 
 Cross-symbol leak guards (per .ports the SQLite version):
@@ -123,11 +124,19 @@ class BarCache:
 
         if not self._validate_overlap(symbol, timeframe, meta["last_bar_ts"], fresh):
             logger.warning(
-                "[cache] overlap mismatch for %s/%s — invalidating and full refetch",
+                "[cache] overlap mismatch for %s/%s — refetching and rewriting "
+                "the recent window (history preserved)",
                 symbol, timeframe,
             )
-            self._invalidate(symbol, timeframe)
+            # Refetch FIRST: if the tv CLI fails this raises and the cache is
+            # left untouched — never invalidate ahead of a successful fetch
+            # (the old DELETE-then-refetch order emptied buckets on fetch
+            # failure; see BUG_tv_non_json.md).
             full = tv_fetcher(symbol, timeframe, count)
+            # _insert_bars uses INSERT ... ON CONFLICT DO UPDATE, so the
+            # divergent overlap bar(s) are rewritten in place and deep seeded
+            # history is preserved (no DELETE). If the leak guards reject the
+            # fresh data, the existing rows simply stay — count never drops.
             self._insert_bars(full, symbol, timeframe)
             return self._read_bars(symbol, timeframe, count)
 

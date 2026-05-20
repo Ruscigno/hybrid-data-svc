@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from typing import Optional
 
@@ -66,6 +67,71 @@ def _tv_env(host: Optional[str], port: Optional[int]) -> Optional[dict]:
     return env
 
 
+def _dump_tv_failure(context: str, result: subprocess.CompletedProcess) -> str:
+    """Write the tv CLI's complete stdout+stderr to a temp file for post-mortem.
+
+    Returns the dump path, or a marker string if the dump itself failed. The
+    truncation/corruption that breaks the JSON parse sits well past
+    stdout[:200], so the full capture is the only way to see the real cause.
+    """
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    path = os.path.join(
+        tempfile.gettempdir(), f"tv_fail_{context}_{int(time.time())}.txt"
+    )
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(f"# context={context} returncode={result.returncode}\n")
+            fh.write(f"# --- stdout ({len(stdout)} bytes) ---\n")
+            fh.write(stdout)
+            fh.write(f"\n# --- stderr ({len(stderr)} bytes) ---\n")
+            fh.write(stderr)
+    except OSError as exc:
+        logger.error("[tv:%s] failed to write diagnostic dump %s: %s",
+                     context, path, exc)
+        return f"<dump failed: {exc}>"
+    return path
+
+
+def _parse_tv_json(result: subprocess.CompletedProcess, context: str) -> dict:
+    """Parse the tv CLI's stdout as JSON, with real diagnostics on failure.
+
+    Uses raw_decode() so a valid JSON object followed by trailing junk still
+    parses (defends against a stray line appended after the payload). A hard
+    failure dumps the complete stdout/stderr to a file and raises a
+    DataFetchError carrying the decode position, byte counts and a snippet
+    around the error — enough to tell truncation apart from corruption.
+    """
+    text = (result.stdout or "").strip()
+    if text:
+        try:
+            payload, end = json.JSONDecoder().raw_decode(text)
+        except json.JSONDecodeError as exc:
+            dump = _dump_tv_failure(context, result)
+            snippet = text[max(0, exc.pos - 120):exc.pos + 120]
+            raise DataFetchError(
+                f"tv CLI returned non-JSON ({context}): {exc.msg} at "
+                f"pos={exc.pos} line={exc.lineno} col={exc.colno}; "
+                f"stdout={len(result.stdout or '')} bytes, "
+                f"returncode={result.returncode}; "
+                f"around-error={snippet!r}; full output dumped to {dump}"
+            ) from exc
+        if end < len(text):
+            logger.warning(
+                "[tv:%s] ignored %d trailing byte(s) after JSON payload",
+                context, len(text) - end,
+            )
+        return payload
+
+    dump = _dump_tv_failure(context, result)
+    raise DataFetchError(
+        f"tv CLI returned empty stdout ({context}); "
+        f"returncode={result.returncode}; "
+        f"stderr={(result.stderr or '').strip()[:300]!r}; "
+        f"full output dumped to {dump}"
+    )
+
+
 def _tv_switch(tv_symbol: str, timeframe: str, tv_cli: str,
                tv_env: Optional[dict] = None) -> None:
     tf_tv = _TF_TO_TV.get(timeframe, timeframe)
@@ -79,10 +145,7 @@ def _tv_switch(tv_symbol: str, timeframe: str, tv_cli: str,
             raise DataFetchError(f"tv {subcmd} switch timed out for {arg!r}")
         if result.returncode != 0:
             raise DataFetchError(f"tv {subcmd} switch failed: {result.stderr.strip()}")
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            raise DataFetchError(f"tv {subcmd} returned non-JSON: {result.stdout[:200]}")
+        data = _parse_tv_json(result, context=subcmd)
         if not data.get("success"):
             raise DataFetchError(f"tv {subcmd} returned failure: {data}")
 
@@ -104,10 +167,7 @@ def _tv_fetch(count: int, tv_cli: str, tv_env: Optional[dict] = None) -> pd.Data
     if result.returncode != 0:
         raise DataFetchError(f"tv CLI failed (exit {result.returncode}): {result.stderr.strip()}")
 
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise DataFetchError(f"tv CLI returned non-JSON: {result.stdout[:200]}")
+    payload = _parse_tv_json(result, context="ohlcv")
 
     if not payload.get("success"):
         raise DataFetchError(f"tv CLI reported failure: {payload}")
