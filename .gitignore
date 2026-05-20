@@ -38,6 +38,7 @@ data/
 *.db-wal
 *.db-shm
 pgdata/
+backups/
 
 # =============================================================================
 # gRPC generated stubs (regenerated from .proto)
