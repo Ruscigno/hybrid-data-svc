@@ -24,6 +24,10 @@ when:
       - 'feat/**'
       - 'chore/**'
       - 'fix/**'
+      - 'docs/**'
+      - 'bug/**'
+      - 'ci/**'
+      - 'test/**'
   - event: push
     branch: main
 
