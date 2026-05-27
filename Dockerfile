@@ -30,13 +30,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY data_svc/ ./data_svc/
 COPY scripts/ ./scripts/
+COPY migrations/ ./migrations/
+COPY docs/ ./docs/
 
-# Generate gRPC Python stubs from .proto (they are gitignored).
-RUN python -m grpc_tools.protoc \
-        -I=data_svc/grpc_server/proto \
-        --python_out=data_svc/grpc_server/proto \
-        --grpc_python_out=data_svc/grpc_server/proto \
-        data_svc/grpc_server/proto/bars.proto
+# Note: gRPC Python stubs (data_svc/grpc_server/proto/*_pb2*.py) are committed
+# to the repo and regenerated via `buf generate` (see Makefile target `proto`).
+# No build-time codegen — the COPY above already brings them in.
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
