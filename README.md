@@ -69,7 +69,21 @@ docker compose exec postgres psql -U datasvc -d datasvc \
 grpcurl -plaintext localhost:50051 list datasvc.v1.BarService
 grpcurl -plaintext -d '{"symbol":"BTC/USDT:USDT","timeframe":"1h","min_bars":200}' \
     localhost:50051 datasvc.v1.BarService/HealthCheck
+
+# Verify REST gateway (bar-rest) reachable
+curl -sf http://localhost:8001/healthz | jq .
+curl -sf 'http://localhost:8001/v1/quote/BINANCE%3ABTCUSDT' | jq .
+# Interactive docs: open http://localhost:8001/docs in a browser.
 ```
+
+### REST API
+
+The `bar-rest` container exposes an HTTP gateway on `:8001`, fed by the same Postgres pool as `bar-grpc` — both transports call into a shared in-process service layer (`data_svc.db.*` + `data_svc.services.*`), so REST and gRPC never duplicate business rules. Use REST from any HTTP client that doesn't speak gRPC (Ghostfolio, Grafana, ad-hoc curl).
+
+- Spec: [docs/openapi.yaml](docs/openapi.yaml) — hand-authored OpenAPI 3.1, source of truth for the REST surface. Pydantic models are generated from it (`make codegen`); a drift test asserts the running app matches.
+- Swagger UI: `http://localhost:8001/docs` once the stack is up.
+- Asset catalog: [data_svc/assets.yaml](data_svc/assets.yaml) — when you add a new feed to `FEEDS`, add a matching entry here so `/v1/quote`, `/v1/search`, and `/v1/profile` recognize the symbol.
+- Auth: optional bearer via `REST_AUTH_TOKEN`. Unset = open mode. Set = every `/v1/*` request must carry `Authorization: Bearer <token>`; `/healthz` is always open.
 
 ## Configuration
 
@@ -82,6 +96,9 @@ All knobs are environment variables. See [.env.example](.env.example) for defaul
 | `BARS_TO_FETCH` | Bars per TV poll | `300` |
 | `POLL_INTERVAL_SECONDS` | Max sleep between polls (loop auto-adapts to bar close) | `30` |
 | `GRPC_LISTEN` | gRPC server bind | `0.0.0.0:50051` |
+| `REST_LISTEN_HOST` | REST gateway bind host | `0.0.0.0` |
+| `REST_LISTEN_PORT` | REST gateway bind port | `8001` |
+| `REST_AUTH_TOKEN` | Optional bearer for `/v1/*` (unset = open mode) | _(empty)_ |
 | `CDP_HOST` | Chrome DevTools host (auto-resolved inside container) | `host.docker.internal` |
 | `CDP_PORT` | CDP port | `9222` |
 
