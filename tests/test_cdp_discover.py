@@ -199,6 +199,7 @@ def test_force_refresh_skips_cache(monkeypatch, _clean_env_and_cache):
 
 
 def test_invalid_port_range_uses_default(monkeypatch, _clean_env_and_cache, caplog):
+    monkeypatch.setattr(cdp_discover, "_DEFAULT_PORT_RANGE", (59999, 59999))
     monkeypatch.setenv("CDP_HOST", "127.0.0.1")
     monkeypatch.setenv("TV_MCP_PORT_RANGE", "garbage")
     # No TV running on default range either, so we expect DiscoveryError after

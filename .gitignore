@@ -41,11 +41,19 @@ pgdata/
 backups/
 
 # =============================================================================
-# gRPC generated stubs (regenerated from .proto)
+# gRPC generated stubs
 # =============================================================================
+# The proto-derived stubs in data_svc/grpc_server/proto/ ARE committed
+# (regenerated via `buf generate` — see Makefile target `proto`). CI's
+# proto-codegen-verify step diffs them on every PR. We still ignore the
+# pattern globally so any *other* future *_pb2.py from third-party imports,
+# tests, etc. don't sneak in.
 *_pb2.py
 *_pb2_grpc.py
 *_pb2.pyi
+!data_svc/grpc_server/proto/*_pb2.py
+!data_svc/grpc_server/proto/*_pb2_grpc.py
+!data_svc/grpc_server/proto/*_pb2.pyi
 
 # =============================================================================
 # Node (TV-MCP submodule build artifacts; submodule itself is tracked)

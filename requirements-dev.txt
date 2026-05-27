@@ -1,0 +1,15 @@
+# Dev-only deps. NOT installed into the Docker image (Dockerfile installs
+# requirements.txt only). Used by:
+#   - `make codegen` (datamodel-code-generator)
+#   - `make test` / pytest
+#   - .woodpecker/pr.yml CI steps
+#
+# Pinned versions: datamodel-code-generator's Pydantic-v2 output is not
+# stable across minors, and the codegen-verify CI step compares the
+# generated file byte-for-byte. Bumping these requires a paired regen.
+
+datamodel-code-generator[http]==0.26.3
+pytest>=8.3
+pytest-asyncio>=0.24
+httpx>=0.27
+testcontainers[postgres]>=4.8

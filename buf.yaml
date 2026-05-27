@@ -1,0 +1,22 @@
+version: v2
+modules:
+  - path: data_svc/grpc_server/proto
+    name: buf.build/tickerbeats/hybrid-data-svc
+lint:
+  use:
+    - STANDARD
+  except:
+    # bars.proto predates buf adoption. The legacy schema doesn't satisfy:
+    #   - PACKAGE_DIRECTORY_MATCH: package is "datasvc.v1" but lives in proto/.
+    #   - RPC_RESPONSE_STANDARD_NAME + RPC_REQUEST_STANDARD_NAME: messages
+    #     are named BarsResponse/HealthRequest/HealthResponse (not
+    #     GetRecentBarsResponse / HealthCheckRequest / HealthCheckResponse).
+    # Renaming would break every existing gRPC client. Re-enable on the next
+    # major version of the proto.
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

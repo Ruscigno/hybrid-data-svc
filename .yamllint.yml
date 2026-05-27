@@ -1,0 +1,13 @@
+# yamllint config — applied by the .woodpecker/pr.yml `yamllint` step.
+# Mirrors the iac-tickerbeats sibling repo's config (relaxed line length,
+# no required document-start markers).
+extends: default
+rules:
+  line-length:
+    max: 200
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable

@@ -163,6 +163,81 @@ class BarCache:
         meta = self._get_meta(symbol, timeframe)
         return int(meta["bar_count"]) if meta else 0
 
+    def latest_bar(self, symbol: str, timeframe: str) -> Optional[dict]:
+        """Return the most recent bar's full OHLCV row, or None if no bars.
+
+        Used by the REST /v1/quote path (and any future gRPC quote RPC).
+        Read-only — never triggers a TV fetch.
+        """
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                """SELECT ts, open, high, low, close, volume
+                     FROM bars
+                    WHERE symbol=%s AND timeframe=%s
+                    ORDER BY ts DESC
+                    LIMIT 1""",
+                (symbol, timeframe),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "ts": int(row[0]),
+            "open": float(row[1]),
+            "high": float(row[2]),
+            "low": float(row[3]),
+            "close": float(row[4]),
+            "volume": float(row[5]),
+        }
+
+    def get_bars_in_range(
+        self,
+        symbol: str,
+        timeframe: str,
+        from_ts: int,
+        to_ts: int,
+        limit: int,
+    ) -> tuple[list[dict], bool]:
+        """Return (rows, truncated) for the given closed-time range.
+
+        rows is ascending by ts. truncated is True when more than `limit`
+        bars matched — in that case the MOST RECENT `limit` are returned
+        (LIMIT+1 sentinel; trim and reverse).
+
+        Pure read; never triggers a TV fetch.
+        """
+        if to_ts < from_ts:
+            return ([], False)
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT ts, open, high, low, close, volume
+                         FROM bars
+                        WHERE symbol=%s AND timeframe=%s
+                          AND ts BETWEEN %s AND %s
+                        ORDER BY ts DESC
+                        LIMIT %s""",
+                    (symbol, timeframe, int(from_ts), int(to_ts), int(limit) + 1),
+                )
+                rows = cur.fetchall()
+        truncated = len(rows) > limit
+        kept = rows[:limit]
+        # The query is DESC for truncation-fairness; flip back to ascending.
+        kept.reverse()
+        return (
+            [
+                {
+                    "ts": int(r[0]),
+                    "open": float(r[1]),
+                    "high": float(r[2]),
+                    "low": float(r[3]),
+                    "close": float(r[4]),
+                    "volume": float(r[5]),
+                }
+                for r in kept
+            ],
+            truncated,
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

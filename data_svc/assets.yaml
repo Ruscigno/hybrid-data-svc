@@ -1,0 +1,59 @@
+# Hand-curated asset catalog. Loaded into the `assets` Postgres table at
+# REST gateway startup (see data_svc/services/assets_loader.py).
+#
+# Maintainer process: when you add a new feed to the FEEDS env var, add the
+# matching entry here so /v1/quote, /v1/search and /v1/profile know about it.
+#
+# Schema (also enforced by the loader):
+#   symbol          required  TradingView identifier, UPPERCASE, `:` separator
+#                             — this is the PK and the value REST callers use.
+#   storage_symbol  required  ccxt key matching data the writer stores in bars.symbol.
+#                             For crypto feeds this is typically e.g. "BTC/USDT:USDT".
+#   name            required  Human-readable.
+#   exchange        required  Free-form exchange tag (usually the prefix before `:`).
+#   currency        required  ISO 4217 quote currency (USD, BRL, EUR, ...).
+#   asset_class     required  One of: EQUITY, CRYPTO, ETF, FUND.
+#   asset_subclass  optional  Free-form (SPOT, PERP, COMMON, ...).
+#   isin            optional  ISO 6166 (omit for crypto).
+#   country         optional  ISO 3166-1 alpha-2.
+
+assets:
+  - symbol: BINANCE:BTCUSDT
+    storage_symbol: BTC/USDT:USDT
+    name: Bitcoin / Tether USD
+    exchange: BINANCE
+    currency: USD
+    asset_class: CRYPTO
+    asset_subclass: PERP
+
+  - symbol: BINANCE:ETHUSDT
+    storage_symbol: ETH/USDT:USDT
+    name: Ethereum / Tether USD
+    exchange: BINANCE
+    currency: USD
+    asset_class: CRYPTO
+    asset_subclass: PERP
+
+  - symbol: BINANCE:BNBUSDT
+    storage_symbol: BNB/USDT:USDT
+    name: BNB / Tether USD
+    exchange: BINANCE
+    currency: USD
+    asset_class: CRYPTO
+    asset_subclass: PERP
+
+  - symbol: BINANCE:SOLUSDT
+    storage_symbol: SOL/USDT:USDT
+    name: Solana / Tether USD
+    exchange: BINANCE
+    currency: USD
+    asset_class: CRYPTO
+    asset_subclass: PERP
+
+  - symbol: BINANCE:XRPUSDT
+    storage_symbol: XRP/USDT:USDT
+    name: XRP / Tether USD
+    exchange: BINANCE
+    currency: USD
+    asset_class: CRYPTO
+    asset_subclass: PERP

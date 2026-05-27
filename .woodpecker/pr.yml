@@ -1,0 +1,133 @@
+# PR + main checks for hybrid-data-svc.
+#
+# Mirrors the iac-tickerbeats sibling-repo pattern:
+#   - skip_clone + manual SSH checkout (the macOS local runner has no git
+#     credentials of its own; we reuse $CI_REPO_CLONE_SSH_URL)
+#   - `image: bash` is a no-op informational tag — every step shells out
+#     on the host with backend=local.
+#
+# Tools assumed to be on PATH (installed by iac-tickerbeats/ci/bootstrap-mac-runner.sh):
+#   - gitleaks, shellcheck, yamllint  (from the sibling-repo bootstrap)
+#   - buf                              (added by this PR's paired iac-tickerbeats change)
+#   - spectral                         (added by this PR's paired iac-tickerbeats change)
+#   - python@3.12, docker CLI          (already present)
+#
+# The pipeline brings up an ephemeral postgres:16-alpine for the integration
+# tests (BarCache + AssetsRepo + REST gateway end-to-end). Container is torn
+# down on success OR failure.
+
+when:
+  - event: pull_request
+    branch:
+      - main
+      - 'epic/**'
+      - 'feat/**'
+      - 'chore/**'
+      - 'fix/**'
+  - event: push
+    branch: main
+
+skip_clone: true
+
+steps:
+  - name: clone
+    image: bash
+    commands:
+      - rm -rf ./* ./.git 2>/dev/null || true
+      - git init -q
+      - 'git remote add origin "$CI_REPO_CLONE_SSH_URL"'
+      - 'git fetch --depth=50 origin "$CI_COMMIT_SHA"'
+      - git checkout -q FETCH_HEAD
+
+  - name: secret-scan
+    image: bash
+    commands:
+      - gitleaks detect --no-banner --redact --source=.
+
+  - name: yamllint
+    image: bash
+    commands:
+      - yamllint -c .yamllint.yml docs/openapi.yaml .woodpecker docker-compose.yml data_svc/assets.yaml buf.yaml buf.gen.yaml
+
+  - name: shellcheck
+    image: bash
+    commands:
+      - shellcheck -x -S warning docker-entrypoint.sh
+
+  - name: buf-lint
+    image: bash
+    commands:
+      - buf lint
+      - buf format --diff --exit-code
+
+  - name: proto-codegen-verify
+    image: bash
+    commands:
+      - buf generate
+      # Drift gate: regen must produce no diff vs committed stubs.
+      - 'git diff --exit-code -- data_svc/grpc_server/proto/ || { echo "buf generate produced an uncommitted diff — run make proto and commit the result"; exit 1; }'
+
+  - name: openapi-lint
+    image: bash
+    commands:
+      - spectral lint --ruleset spectral:oas docs/openapi.yaml
+
+  - name: venv-setup
+    image: bash
+    commands:
+      # Per-CI-run venv lives inside the step workspace so it isn't shared
+      # across pipelines. Cheap on the local macOS runner; we don't need
+      # a global cache.
+      - python3.12 -m venv "$CI_WORKSPACE/.venv"
+      - "$CI_WORKSPACE/.venv/bin/pip install --quiet --upgrade pip"
+      - "$CI_WORKSPACE/.venv/bin/pip install --quiet -r requirements.txt -r requirements-dev.txt"
+
+  - name: pydantic-codegen-verify
+    image: bash
+    commands:
+      # Regenerate Pydantic models from the OpenAPI spec and assert no diff.
+      - "$CI_WORKSPACE/.venv/bin/python -m datamodel_code_generator
+          --input docs/openapi.yaml
+          --input-file-type openapi
+          --output data_svc/rest/models/_generated.py
+          --output-model-type pydantic_v2.BaseModel
+          --target-python-version 3.12
+          --use-field-description
+          --field-include-all-keys
+          --use-schema-description
+          --snake-case-field
+          --use-default
+          --use-double-quotes
+          --allow-population-by-field-name
+          --disable-timestamp"
+      - 'git diff --exit-code -- data_svc/rest/models/_generated.py || { echo "datamodel-codegen produced an uncommitted diff — run make codegen and commit the result"; exit 1; }'
+
+  - name: pytest
+    image: bash
+    environment:
+      # The local runner has Colima; testcontainers needs the explicit socket
+      # path because docker-py defaults to /var/run/docker.sock.
+      DOCKER_HOST: unix:///Users/sander/.colima/default/docker.sock
+      # Bind-mounting the docker socket into Ryuk fails on Colima (virtiofs
+      # doesn't support socket mounts). Disable Ryuk; testcontainers prints
+      # a warning but otherwise works correctly.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
+    commands:
+      - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
+
+  - name: docker-build
+    image: bash
+    commands:
+      # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
+      # (out of scope for this PR) handles publish + restart on push to main.
+      - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'
+
+  - name: single-author
+    image: bash
+    commands:
+      # Match the iac-tickerbeats single-author policy verbatim. Co-Authored-By
+      # trailers introduced by THIS PR (vs $CI_COMMIT_PULL_REQUEST_BASE_BRANCH)
+      # fail the build.
+      - 'BASE_REF="$${CI_COMMIT_PULL_REQUEST_BASE_BRANCH:-main}"'
+      - git fetch origin "$BASE_REF" --quiet || true
+      - 'if git log "origin/$BASE_REF..HEAD" --format="%B" | grep -iE "^Co-Authored-By:"; then echo "Co-Authored-By trailer present — single-author policy violated"; exit 1; fi'
