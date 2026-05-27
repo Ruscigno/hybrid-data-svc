@@ -1,0 +1,439 @@
+# OpenAPI source of truth for the hybrid-data-svc REST gateway.
+#
+# This document is hand-authored and lives at HEAD; it drives Pydantic model
+# codegen (`make codegen`) and is asserted byte-equal to FastAPI's runtime
+# `app.openapi()` output by tests/rest/test_openapi_drift.py.
+#
+# Deviations from docs/hybrid-data-svc-rest-api-spec.md (documented):
+#   * /healthz returns {status, db_reachable, assets_loaded}, not
+#     {grpc_reachable, db_reachable}: REST runs in-process over the same
+#     Postgres pool as the gRPC server, with no network gRPC dependency to
+#     probe.
+#   * Validation-error schemas (HTTPValidationError, ValidationError) are
+#     listed here explicitly so the drift test stays a plain dict equality;
+#     they mirror what FastAPI auto-emits.
+#   * CORS: Access-Control-Allow-Origin is "*" with allow_credentials=false;
+#     browsers must not send credentialed requests. Documented here, set in
+#     data_svc/rest/app.py.
+
+openapi: 3.1.0
+info:
+  title: hybrid-data-svc REST API
+  version: 0.1.0
+  description: |
+    REST gateway over the internal `BarService` gRPC + the curated `assets`
+    catalog. Designed to feed Ghostfolio's MANUAL data source and any other
+    HTTP-only consumer.
+
+    All `/v1/*` endpoints accept an optional `Authorization: Bearer <token>`
+    header; auth is enforced only when the `REST_AUTH_TOKEN` env var is set.
+    `/healthz` is always open.
+
+    Symbols use TradingView chart identifiers, uppercase, `:`-separated
+    (e.g. `BINANCE:BTCUSDT`, `NASDAQ:AAPL`). URL-encode `:` as `%3A` in
+    path parameters.
+
+servers:
+  - url: http://localhost:8001
+    description: Local docker-compose default.
+
+tags:
+  - name: quote
+    description: Latest closed-bar price.
+  - name: historical
+    description: OHLCV bars over a date range.
+  - name: search
+    description: Asset autocomplete.
+  - name: profile
+    description: Asset metadata lookup.
+  - name: health
+    description: Liveness probe.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe.
+      operationId: getHealthz
+      security: []
+      responses:
+        "200":
+          description: Gateway is reachable; DB connectivity and asset catalog state are reported in the body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/quote/{symbol}:
+    get:
+      tags: [quote]
+      summary: Latest closed-bar price for a symbol.
+      operationId: getQuote
+      parameters:
+        - $ref: "#/components/parameters/SymbolPath"
+        - name: timeframe
+          in: query
+          required: false
+          description: Bar timeframe to return the latest close for.
+          schema:
+            $ref: "#/components/schemas/Timeframe"
+        - name: max_age_seconds
+          in: query
+          required: false
+          description: "Bars older than this are returned with `stale: true`. Does not change the HTTP status."
+          schema:
+            type: integer
+            minimum: 1
+            default: 3600
+      responses:
+        "200":
+          description: Latest closed bar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Quote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UnknownSymbol"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/NoData"
+
+  /v1/historical/{symbol}:
+    get:
+      tags: [historical]
+      summary: OHLCV bars over a date range.
+      operationId: getHistorical
+      parameters:
+        - $ref: "#/components/parameters/SymbolPath"
+        - name: from
+          in: query
+          required: true
+          description: Start of the range, inclusive (epoch seconds, UTC).
+          schema:
+            type: integer
+            minimum: 0
+        - name: to
+          in: query
+          required: true
+          description: End of the range, inclusive (epoch seconds, UTC).
+          schema:
+            type: integer
+            minimum: 0
+        - name: interval
+          in: query
+          required: false
+          description: Bar timeframe.
+          schema:
+            $ref: "#/components/schemas/Timeframe"
+      responses:
+        "200":
+          description: Bars in the range. Capped at 5000; if more would fit, `truncated` is true and the most recent 5000 are returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoricalResponse"
+        "400":
+          $ref: "#/components/responses/BadRange"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UnknownSymbol"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /v1/search:
+    get:
+      tags: [search]
+      summary: Substring search over the asset catalog.
+      operationId: search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Case-insensitive substring matched against `symbol` and `name`.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: limit
+          in: query
+          required: false
+          description: Maximum results to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: Matched assets (possibly empty).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+  /v1/profile/{symbol}:
+    get:
+      tags: [profile]
+      summary: Asset metadata lookup.
+      operationId: getProfile
+      parameters:
+        - $ref: "#/components/parameters/SymbolPath"
+      responses:
+        "200":
+          description: Asset metadata. Optional fields the gateway cannot fill are omitted, not returned as null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Asset"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UnknownSymbol"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: |
+        Optional bearer auth. When the `REST_AUTH_TOKEN` env var is set,
+        every `/v1/*` call must include `Authorization: Bearer <token>`;
+        missing/invalid → 401. `/healthz` is always open.
+
+  parameters:
+    SymbolPath:
+      name: symbol
+      in: path
+      required: true
+      description: TradingView identifier, uppercase, `:`-separated. URL-encode `:` as `%3A`.
+      schema:
+        type: string
+        minLength: 3
+        maxLength: 32
+        pattern: "^[A-Z0-9]+:[A-Z0-9._/-]+$"
+      examples:
+        crypto:
+          value: BINANCE:BTCUSDT
+        equity:
+          value: NASDAQ:AAPL
+
+  responses:
+    Unauthorized:
+      description: Bearer token missing or invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnknownSymbol:
+      description: Symbol is not in the asset catalog.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NoData:
+      description: No bars stored yet for this symbol/timeframe.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadRange:
+      description: Invalid query parameters (e.g. `from >= to`, unsupported interval).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationFailed:
+      description: Request validation failed (FastAPI default).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HTTPValidationError"
+
+  schemas:
+    Timeframe:
+      type: string
+      enum:
+        - "1m"
+        - "3m"
+        - "5m"
+        - "15m"
+        - "30m"
+        - "1h"
+        - "2h"
+        - "4h"
+        - "1D"
+        - "1W"
+      default: "1D"
+
+    AssetClass:
+      type: string
+      enum: [EQUITY, CRYPTO, ETF, FUND]
+
+    Asset:
+      type: object
+      required: [symbol, name, exchange, currency, assetClass]
+      properties:
+        symbol:
+          type: string
+          description: TradingView identifier, uppercase.
+          examples: ["BINANCE:BTCUSDT"]
+        name:
+          type: string
+          description: Human-readable asset name.
+        exchange:
+          type: string
+          description: Exchange identifier (typically the prefix before `:` in the symbol).
+        currency:
+          type: string
+          description: ISO 4217 quote currency.
+          minLength: 3
+          maxLength: 3
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        assetSubClass:
+          type: string
+          description: Free-form sub-class (e.g. SPOT, PERP, COMMON).
+        isin:
+          type: string
+          description: ISIN if known; omitted otherwise.
+          minLength: 12
+          maxLength: 12
+        country:
+          type: string
+          description: ISO 3166-1 alpha-2 country code.
+          minLength: 2
+          maxLength: 2
+
+    Quote:
+      type: object
+      required: [symbol, timeframe, price, currency, ts, stale]
+      properties:
+        symbol:
+          type: string
+          examples: ["BINANCE:BTCUSDT"]
+        timeframe:
+          $ref: "#/components/schemas/Timeframe"
+        price:
+          type: number
+          format: double
+          description: Close price of the latest closed bar.
+        currency:
+          type: string
+          description: Quote currency from the asset catalog.
+          minLength: 3
+          maxLength: 3
+        ts:
+          type: integer
+          description: Bar open timestamp, epoch seconds UTC.
+        stale:
+          type: boolean
+          description: True if the bar is older than `max_age_seconds`.
+
+    Bar:
+      type: object
+      required: [ts, open, high, low, close, volume]
+      properties:
+        ts:
+          type: integer
+          description: Bar open timestamp, epoch seconds UTC.
+        open:
+          type: number
+          format: double
+        high:
+          type: number
+          format: double
+        low:
+          type: number
+          format: double
+        close:
+          type: number
+          format: double
+        volume:
+          type: number
+          format: double
+
+    HistoricalResponse:
+      type: object
+      required: [symbol, interval, bars]
+      properties:
+        symbol:
+          type: string
+        interval:
+          $ref: "#/components/schemas/Timeframe"
+        bars:
+          type: array
+          items:
+            $ref: "#/components/schemas/Bar"
+        truncated:
+          type: boolean
+          description: True if the requested range contained more bars than the cap (5000); the most recent are returned.
+
+    SearchResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Asset"
+
+    HealthResponse:
+      type: object
+      required: [status, db_reachable, assets_loaded]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        db_reachable:
+          type: boolean
+        assets_loaded:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+        message:
+          type: string
+          description: Human-readable error message.
+
+    # FastAPI emits these for 422 validation failures; mirrored here so the
+    # drift test (FastAPI.openapi() == this file) is a plain dict equality.
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+
+    ValidationError:
+      type: object
+      required: [loc, msg, type]
+      properties:
+        loc:
+          type: array
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          type: string
+        type:
+          type: string
+
+security:
+  - bearer: []
