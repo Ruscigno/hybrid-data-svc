@@ -1,0 +1,10 @@
+# Spectral OpenAPI ruleset.
+# Run via `make openapi-lint` (`spectral lint docs/openapi.yaml`).
+# Used by the .woodpecker/pr.yml `openapi-lint` step.
+extends:
+  - spectral:oas
+rules:
+  # The default ruleset complains about operation tag definitions on every
+  # path even though FastAPI tags work fine for grouping in Swagger UI.
+  # Demote to hint.
+  operation-tag-defined: hint
