@@ -125,20 +125,25 @@ steps:
       # a warning but otherwise works correctly.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     commands:
-      # Resolve the docker socket from the runner-user's active docker
-      # context. testcontainers (docker-py) does NOT honour `docker context`,
-      # so DOCKER_HOST must be set explicitly. $HOME would point at the
-      # Woodpecker per-step tempdir (path > AF_UNIX 108-char limit when
-      # joined with /.colima/default/docker.sock), so we ask the docker CLI
-      # for the real endpoint instead.
-      - 'export DOCKER_HOST="$(docker context inspect --format ''{{.Endpoints.docker.Host}}'')"'
+      # Resolve the operator's home via the user database (POSIX tilde
+      # expansion through `eval echo`), not $HOME — the Woodpecker
+      # local-backend overrides $HOME with a per-step tempdir, and
+      # `docker context inspect` looking under that tempdir falls back to
+      # /var/run/docker.sock (which doesn't exist on macOS with Colima).
+      # testcontainers (docker-py) does not honour `docker context`, so
+      # DOCKER_HOST has to be set explicitly. Portable across operators:
+      # `id -un` returns whoever the runner is launched as.
+      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
       - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
 
   - name: docker-build
     image: bash
     commands:
-      # docker build honours `docker context` on its own — no DOCKER_HOST
-      # plumbing needed, in contrast to the pytest step above.
+      # Same operator-home resolution as the pytest step. The docker CLI
+      # *does* honour `docker context`, but only when it can find the
+      # context store — and under the Woodpecker per-step $HOME there's
+      # none, so we pin DOCKER_HOST manually here too.
+      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
       - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'
