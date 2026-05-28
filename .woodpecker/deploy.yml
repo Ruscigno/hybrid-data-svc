@@ -5,9 +5,12 @@
 # design: deploys are a deliberate operator action.
 #
 # Required parameter (manual-build variable):
-#   CONFIRM = yes
-#     The guard step refuses to proceed without this. Prevents accidental
-#     deploys from "click the manual button to see what it does".
+#   DEPLOY_MAIN = true
+#     Flag that authorizes deploying `main` to this host. The guard step
+#     refuses to proceed without it. Naming reflects intent: this pipeline
+#     deploys the `main` branch — setting the flag is the operator's
+#     explicit go-ahead. Anything other than the literal string `true` is
+#     treated as "don't deploy".
 #
 # Optional parameters:
 #   DEPLOY_PATH        Override the host clone location.
@@ -19,7 +22,7 @@
 #                      The post-deploy healthcheck polls this port.
 #
 # Pipeline:
-#   1. guard       - assert CONFIRM=yes
+#   1. guard       - assert DEPLOY_MAIN=true
 #   2. deploy      - git fetch + reset --hard origin/main; docker compose
 #                    up -d --build  (rebuilds all three project services)
 #   3. healthz     - poll http://localhost:$REST_HOST_PORT/healthz for up
@@ -35,21 +38,30 @@ steps:
   - name: guard
     image: bash
     commands:
-      # Manual build params land as env vars. Refuse to proceed unless
-      # CONFIRM=yes is set explicitly — see README §Deployment.
-      - 'if [ "${CONFIRM:-}" != "yes" ]; then echo "Refusing to deploy: set CONFIRM=yes in the manual build params (see README §Deployment)."; exit 1; fi'
+      # Manual build params land as env vars. DEPLOY_MAIN must equal "true"
+      # explicitly — anything else (including the unset case) refuses.
+      - 'if [ "${DEPLOY_MAIN:-}" != "true" ]; then echo "Refusing to deploy main: set DEPLOY_MAIN=true in the manual build params (see README §Deployment)."; exit 1; fi'
 
   - name: deploy
     image: bash
+    # OPERATOR_HOME + DOCKER_HOST are recomputed in each step because
+    # Woodpecker spawns a fresh shell per step (no shared exports).
     commands:
       - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
       - 'DEPLOY_PATH="${DEPLOY_PATH:-${OPERATOR_HOME}/projects/hybrid-data-svc}"'
       - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
       - 'echo "[deploy] target dir: $DEPLOY_PATH"'
       - 'echo "[deploy] DOCKER_HOST=$DOCKER_HOST"'
+      # Pre-flight: cd target must exist AND be a git working tree. Surfacing
+      # this here keeps the operator from chasing an opaque `fatal: not a
+      # git repository` later in the script.
+      - 'if [ ! -d "$DEPLOY_PATH" ]; then echo "[deploy] $DEPLOY_PATH does not exist — check DEPLOY_PATH"; exit 1; fi'
       - 'cd "$DEPLOY_PATH"'
-      # Fail loudly if the working tree has untracked / uncommitted edits
-      # (operator should fix manually, not have deploy clobber them).
+      - 'if [ ! -d .git ]; then echo "[deploy] $DEPLOY_PATH is not a git repository — check DEPLOY_PATH"; exit 1; fi'
+      # Fail loudly if the working tree has uncommitted edits (operator
+      # should fix manually, not have deploy clobber them). Untracked
+      # files like .env are excluded — they're gitignored and survive
+      # `git reset --hard` anyway.
       - 'if [ -n "$(git status --porcelain --untracked-files=no)" ]; then echo "[deploy] working tree is dirty — refusing to git reset:"; git status --short; exit 1; fi'
       - 'git fetch origin main --quiet'
       - 'git reset --hard origin/main'
@@ -60,6 +72,12 @@ steps:
 
   - name: healthz
     image: bash
+    # Same OPERATOR_HOME / DOCKER_HOST recomputation rationale as `deploy`:
+    # Woodpecker doesn't share env across steps. Note that `url` defined in
+    # an earlier `commands:` item IS in scope inside the block scalar below
+    # — Woodpecker concatenates all items in a step into a single shell
+    # script before executing. shellcheck analyses each item in isolation
+    # and would emit SC2154 here; it's a false positive in this runtime.
     commands:
       - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
       - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
