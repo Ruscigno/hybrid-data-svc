@@ -124,6 +124,10 @@ steps:
 
   - name: docker-build
     image: bash
+    environment:
+      # Colima daemon socket — same reason as the pytest step. The default
+      # /var/run/docker.sock doesn't exist on macOS hosts running Colima.
+      DOCKER_HOST: unix:///Users/sander/.colima/default/docker.sock
     commands:
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
