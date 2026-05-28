@@ -42,6 +42,10 @@ steps:
       - 'git remote add origin "$CI_REPO_CLONE_SSH_URL"'
       - 'git fetch --depth=50 origin "$CI_COMMIT_SHA"'
       - git checkout -q FETCH_HEAD
+      # external/tradingview-mcp is a public HTTPS submodule (see .gitmodules)
+      # — the Dockerfile depends on its package.json. Without --init the
+      # docker-build step's `npm install` later fails with ENOENT.
+      - git submodule update --init --recursive --depth=1
 
   - name: secret-scan
     image: bash
