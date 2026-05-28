@@ -15,6 +15,7 @@ import grpc
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from .._responses import QUOTE_RESPONSES
+from .._timeframes import rest_to_storage
 from ..auth import require_bearer
 from ..deps import get_grpc_client
 from ..grpc_client import BarServiceClient
@@ -54,7 +55,7 @@ def get_quote(
         )
 
     try:
-        bar = grpc_client.latest_bar(asset.storage_symbol, timeframe.value)
+        bar = grpc_client.latest_bar(asset.storage_symbol, rest_to_storage(timeframe.value))
     except grpc.RpcError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
