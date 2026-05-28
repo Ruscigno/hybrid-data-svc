@@ -55,20 +55,20 @@ steps:
     # its own shell on the local backend, so multi-item recipes lose
     # variable state between items.
     #
-    # Note the `$${VAR}` escapes throughout: Woodpecker performs ITS OWN
-    # template interpolation on `${...}` patterns BEFORE handing the
-    # script to bash. Unescaped `${OPERATOR_HOME}` gets substituted with
-    # the empty Woodpecker-side value, leaving bash with a literal empty
-    # prefix at expansion time (see pipeline #47 — OPERATOR_HOME echoed
-    # /Users/sander correctly but DEPLOY_PATH was already mangled to
-    # /projects/hybrid-data-svc because Woodpecker ate the variable
-    # before bash ran the line). `$VAR` (no braces) is NOT touched by
-    # Woodpecker's templater, so plain `$DEPLOY_PATH` stays literal.
+    # IMPORTANT: avoid `${VAR}` (brace form) entirely in shell bodies.
+    # Woodpecker performs its own template-interpolation pass on `${...}`
+    # patterns BEFORE the script reaches bash, and the parser chokes on
+    # nested expressions like `${DEPLOY_PATH:-${OPERATOR_HOME}/...}` with
+    # "unable to parse variable name". We instead use the brace-less
+    # `$VAR` form (which Woodpecker leaves alone) and substitute defaults
+    # with explicit `if [ -z "$VAR" ]; then ...; fi`.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        DEPLOY_PATH="$${DEPLOY_PATH:-$${OPERATOR_HOME}/projects/hybrid-data-svc}"
-        export DOCKER_HOST="unix://$${OPERATOR_HOME}/.colima/default/docker.sock"
+        if [ -z "$DEPLOY_PATH" ]; then
+          DEPLOY_PATH="$OPERATOR_HOME/projects/hybrid-data-svc"
+        fi
+        export DOCKER_HOST="unix://$OPERATOR_HOME/.colima/default/docker.sock"
         echo "[deploy] OPERATOR_HOME=$OPERATOR_HOME"
         echo "[deploy] target dir: $DEPLOY_PATH"
         echo "[deploy] DOCKER_HOST=$DOCKER_HOST"
@@ -101,14 +101,16 @@ steps:
 
   - name: healthz
     image: bash
-    # Same $${VAR} escape rule as the deploy step above — Woodpecker
-    # template-interpolates `${...}` before bash runs the line.
+    # Same `$VAR`-only convention as the deploy step.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        export DOCKER_HOST="unix://$${OPERATOR_HOME}/.colima/default/docker.sock"
-        host_port="$${REST_HOST_PORT:-8001}"
-        url="http://localhost:$${host_port}/healthz"
+        export DOCKER_HOST="unix://$OPERATOR_HOME/.colima/default/docker.sock"
+        host_port="$REST_HOST_PORT"
+        if [ -z "$host_port" ]; then
+          host_port="8001"
+        fi
+        url="http://localhost:$host_port/healthz"
         echo "[deploy] polling $url for readiness…"
         for i in $(seq 1 12); do
           code=$(curl -sf -o /dev/null -w "%{http_code}" "$url" || echo 000)
