@@ -74,7 +74,10 @@ steps:
   - name: openapi-lint
     image: bash
     commands:
-      - spectral lint --ruleset spectral:oas docs/openapi.yaml
+      # .spectral.yaml at the repo root extends spectral:oas. The CLI's
+      # --ruleset flag only accepts paths, not built-in names like
+      # `spectral:oas`, so we rely on auto-discovery of .spectral.yaml.
+      - spectral lint docs/openapi.yaml
 
   - name: venv-setup
     image: bash
