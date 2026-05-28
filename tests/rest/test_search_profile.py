@@ -58,6 +58,7 @@ def test_profile_happy_path(client, seed_asset):
         "symbol": "NASDAQ:AAPL",
         "name": "Apple Inc.",
         "exchange": "NASDAQ",
+        "type": "equity",
         "currency": "USD",
         "assetClass": "EQUITY",
         "assetSubClass": "COMMON",

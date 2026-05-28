@@ -25,7 +25,7 @@ def test_quote_unknown_symbol_404(client):
     r = client.get("/v1/quote/UNKNOWN:XYZ")
     assert r.status_code == 404
     body = r.json()
-    assert body == {"error": "unknown_symbol", "message": "UNKNOWN:XYZ is not in the asset catalog"}
+    assert body == {"error": "unknown_symbol", "message": "UNKNOWN:XYZ is not in the configured feed list"}
 
 
 def test_quote_no_data_503(client, seed_asset):

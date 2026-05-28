@@ -1,8 +1,8 @@
-"""/healthz — liveness probe. No auth.
+"""/healthz — liveness probe. Always open (no auth).
 
-Reports DB reachability and whether the asset catalog has been loaded.
-Two booleans are checked independently so an operator can distinguish
-"DB is down" from "we haven't seeded assets yet".
+Per spec §"GET /healthz": returns 200 if the gateway can reach the gRPC
+service and the Postgres connection is alive. Body shape is exactly
+`{status, grpc_reachable, db_reachable}`.
 """
 
 from __future__ import annotations
@@ -11,8 +11,10 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from ..deps import get_assets_repo, get_bar_cache
+from ..deps import get_bar_cache, get_grpc_client
+from ..grpc_client import BarServiceClient
 from ..models import HealthResponse, Status
+from ...db.cache import BarCache
 
 router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
@@ -26,11 +28,10 @@ logger = logging.getLogger(__name__)
     summary="Liveness probe.",
 )
 def get_healthz(
-    bar_cache=Depends(get_bar_cache),
-    assets=Depends(get_assets_repo),
+    bar_cache: BarCache = Depends(get_bar_cache),
+    grpc_client: BarServiceClient = Depends(get_grpc_client),
 ) -> HealthResponse:
     db_reachable = False
-    assets_loaded = False
     try:
         with bar_cache._pool.connection() as conn:  # noqa: SLF001 (pool is internal)
             conn.execute("SELECT 1").fetchone()
@@ -38,15 +39,11 @@ def get_healthz(
     except Exception as exc:
         logger.warning("healthz: db unreachable: %s", exc)
 
-    if db_reachable:
-        try:
-            assets_loaded = assets.count() > 0
-        except Exception as exc:
-            logger.warning("healthz: assets count failed: %s", exc)
+    grpc_reachable = grpc_client.ping()
 
-    status_val = Status.ok if (db_reachable and assets_loaded) else Status.degraded
+    status_val = Status.ok if (db_reachable and grpc_reachable) else Status.degraded
     return HealthResponse(
         status=status_val,
+        grpc_reachable=grpc_reachable,
         db_reachable=db_reachable,
-        assets_loaded=assets_loaded,
     )

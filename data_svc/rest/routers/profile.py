@@ -43,6 +43,7 @@ def get_profile(
         symbol=row.symbol,
         name=row.name,
         exchange=row.exchange,
+        type=row.asset_class.lower() if row.asset_class else None,
         currency=row.currency,
         asset_class=AssetClass(row.asset_class),
         asset_sub_class=row.asset_subclass,

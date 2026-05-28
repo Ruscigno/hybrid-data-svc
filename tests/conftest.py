@@ -60,11 +60,51 @@ def reset_db(pg_url: str) -> None:
         conn.execute("TRUNCATE TABLE bars, cache_meta, assets RESTART IDENTITY")
 
 
+class _FakeBarServiceClient:
+    """In-process stand-in for data_svc.rest.grpc_client.BarServiceClient.
+
+    Reads from the same `bars` table the real BarService.GetRecentBars
+    would query, so the `seed_bar` fixture works identically against the
+    real gRPC server and this stub. `ping()` returns whatever the test
+    configured via `set_reachable()`.
+    """
+
+    def __init__(self, pg_url: str) -> None:
+        from data_svc.db.cache import BarCache
+        self._cache = BarCache(pg_url)
+        self._reachable = True
+
+    def set_reachable(self, value: bool) -> None:
+        self._reachable = value
+
+    def latest_bar(self, storage_symbol: str, timeframe: str, timeout: float = 3.0):
+        from data_svc.rest.grpc_client import BarRow
+        row = self._cache.latest_bar(storage_symbol, timeframe)
+        if row is None:
+            return None
+        return BarRow(
+            ts=row["ts"],
+            open=row["open"],
+            high=row["high"],
+            low=row["low"],
+            close=row["close"],
+            volume=row["volume"],
+        )
+
+    def ping(self, timeout: float = 1.5) -> bool:
+        return self._reachable
+
+    def close(self) -> None:
+        pass
+
+
 @pytest.fixture
 def app(pg_url: str, reset_db, monkeypatch):
     """A fresh FastAPI app pointed at the ephemeral DB.
 
     Resets data per test; assets catalog is empty unless the test seeds it.
+    The BarService gRPC client is swapped for an in-process stub so we
+    don't need to spin up a real gRPC server in tests.
     """
     # Force a fresh pool per test session so the pg_url change is honored.
     from data_svc.db import postgres as pg_mod
@@ -83,9 +123,18 @@ def app(pg_url: str, reset_db, monkeypatch):
 
 
 @pytest.fixture
-def client(app):
+def client(app, pg_url):
     from fastapi.testclient import TestClient
     with TestClient(app) as c:
+        # Replace the real BarService gRPC client (constructed by the
+        # lifespan, which has already run by the time we're past
+        # __enter__) with the in-process stub.
+        previous = c.app.state.grpc_client
+        try:
+            previous.close()
+        except Exception:
+            pass
+        c.app.state.grpc_client = _FakeBarServiceClient(pg_url)
         yield c
 
 

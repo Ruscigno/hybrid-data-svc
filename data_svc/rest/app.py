@@ -6,10 +6,12 @@ Postgres, and so the OpenAPI drift test can call create_app().openapi()
 on demand.
 
 Lifespan:
-  1. Open the Postgres pool.
-  2. Instantiate AssetsRepo, BarCache, QuoteService and stash on app.state.
-  3. Run the assets.yaml sync.
-  4. On shutdown — close the pool.
+  1. Open the Postgres pool (shared with BarCache + AssetsRepo).
+  2. Open the long-lived BarService gRPC channel (used by /v1/quote and
+     /healthz — see grpc_client.py).
+  3. Stash AssetsRepo, BarCache, and the gRPC client on app.state.
+  4. Run the assets.yaml sync (idempotent upsert).
+  5. On shutdown — close the gRPC channel and the Postgres pool.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from ..db.assets import AssetsRepo
 from ..db.cache import BarCache
 from ..db.postgres import close_pool
 from ..services import assets_loader
-from ..services.quote import QuoteService
+from .grpc_client import BarServiceClient
 from .routers import healthz, historical, profile, quote, search
 from .settings import RestSettings
 
@@ -64,23 +66,24 @@ async def lifespan(app: FastAPI):
 
     assets_repo = AssetsRepo(settings.postgres_url)
     bar_cache = BarCache(settings.postgres_url)
-    quote_service = QuoteService(assets_repo, bar_cache)
+    grpc_client = BarServiceClient(settings.grpc_target)
 
     app.state.assets_repo = assets_repo
     app.state.bar_cache = bar_cache
-    app.state.quote_service = quote_service
+    app.state.grpc_client = grpc_client
 
     try:
         n = assets_loader.sync(assets_repo, settings.assets_yaml_path, strict=False)
         logger.info("REST gateway ready; %d asset(s) in catalog", n)
     except Exception as exc:
-        # Don't kill the gateway on a bad YAML — healthz will report
-        # assets_loaded=false and operators can fix the file.
+        # Don't kill the gateway on a bad YAML — assets endpoints will
+        # 404 and operators can fix the file.
         logger.error("assets sync failed at startup: %s", exc)
 
     try:
         yield
     finally:
+        grpc_client.close()
         close_pool()
 
 
