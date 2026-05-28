@@ -105,11 +105,27 @@ steps:
   - name: healthz
     image: bash
     # Same `$VAR`-only convention as the deploy step.
+    #
+    # Read REST_HOST_PORT from the host's `.env` (the same file docker
+    # compose loads), so the healthcheck polls whatever port the
+    # container actually publishes to. Without this, we default to :8001
+    # and on a host where 8001 is taken by a sibling project (e.g.
+    # tnr-backend) the poll would get a false-positive HTTP 200 from the
+    # wrong service and report a broken deploy as healthy.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
+        if [ -z "$DEPLOY_PATH" ]; then
+          DEPLOY_PATH="$OPERATOR_HOME/projects/hybrid-data-svc"
+        fi
         export DOCKER_HOST="unix://$OPERATOR_HOME/.colima/default/docker.sock"
-        host_port="$REST_HOST_PORT"
+        host_port=""
+        if [ -f "$DEPLOY_PATH/.env" ]; then
+          host_port=$(awk -F= '/^REST_HOST_PORT=/{print $2; exit}' "$DEPLOY_PATH/.env")
+        fi
+        if [ -z "$host_port" ]; then
+          host_port="$REST_HOST_PORT"
+        fi
         if [ -z "$host_port" ]; then
           host_port="8001"
         fi
