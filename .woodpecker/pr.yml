@@ -125,25 +125,24 @@ steps:
       # a warning but otherwise works correctly.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     commands:
-      # Resolve the operator's home via the user database (POSIX tilde
-      # expansion through `eval echo`), not $HOME — the Woodpecker
-      # local-backend overrides $HOME with a per-step tempdir, and
-      # `docker context inspect` looking under that tempdir falls back to
-      # /var/run/docker.sock (which doesn't exist on macOS with Colima).
+      # /Users/$(id -un) is the canonical macOS home prefix — the runner
+      # is always on macOS (Colima requirement). The previous attempt used
+      # `eval echo "~$(id -un)"` for portability, but in Woodpecker's
+      # local-backend step that resolved to an empty string (see
+      # deploy.yml pipeline #40 failure). The direct form is unambiguous,
+      # works under set -e, and doesn't depend on tilde-expansion behavior
+      # in the runner shell. $HOME is unreliable here — Woodpecker
+      # overrides it with a per-step tempdir.
       # testcontainers (docker-py) does not honour `docker context`, so
-      # DOCKER_HOST has to be set explicitly. Portable across operators:
-      # `id -un` returns whoever the runner is launched as.
-      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
+      # DOCKER_HOST has to be set explicitly.
+      - 'export DOCKER_HOST="unix:///Users/$(id -un)/.colima/default/docker.sock"'
       - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
 
   - name: docker-build
     image: bash
     commands:
-      # Same operator-home resolution as the pytest step. The docker CLI
-      # *does* honour `docker context`, but only when it can find the
-      # context store — and under the Woodpecker per-step $HOME there's
-      # none, so we pin DOCKER_HOST manually here too.
-      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
+      # Same /Users/$(id -un) rationale as the pytest step.
+      - 'export DOCKER_HOST="unix:///Users/$(id -un)/.colima/default/docker.sock"'
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
       - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'

@@ -53,10 +53,16 @@ steps:
     image: bash
     # OPERATOR_HOME + DOCKER_HOST are recomputed in each step because
     # Woodpecker spawns a fresh shell per step (no shared exports).
+    # /Users/$(id -un) is the canonical macOS home prefix. We previously
+    # used `eval echo "~$(id -un)"` for portability, but in the Woodpecker
+    # local-backend step that resolved to an empty string (see pipeline
+    # #40); the direct form is unambiguous and works under set -e. The
+    # iac-tickerbeats stack is macOS-only, so /Users/ is safe to assume.
     commands:
-      - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
+      - 'OPERATOR_HOME="/Users/$(id -un)"'
       - 'DEPLOY_PATH="${DEPLOY_PATH:-${OPERATOR_HOME}/projects/hybrid-data-svc}"'
       - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
+      - 'echo "[deploy] OPERATOR_HOME=$OPERATOR_HOME"'
       - 'echo "[deploy] target dir: $DEPLOY_PATH"'
       - 'echo "[deploy] DOCKER_HOST=$DOCKER_HOST"'
       # Pre-flight: cd target must exist AND be a git working tree. Surfacing
@@ -86,7 +92,7 @@ steps:
     # script before executing. shellcheck analyses each item in isolation
     # and would emit SC2154 here; it's a false positive in this runtime.
     commands:
-      - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
+      - 'OPERATOR_HOME="/Users/$(id -un)"'
       - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
       - 'host_port="${REST_HOST_PORT:-8001}"'
       - 'url="http://localhost:${host_port}/healthz"'
