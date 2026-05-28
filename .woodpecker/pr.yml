@@ -125,17 +125,20 @@ steps:
       # a warning but otherwise works correctly.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     commands:
-      # Colima socket path is host-user-relative; resolve via $HOME so the
-      # pipeline isn't pinned to one operator's username. testcontainers
-      # needs this explicit because docker-py defaults to /var/run/docker.sock.
-      - 'export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"'
+      # Resolve the docker socket from the runner-user's active docker
+      # context. testcontainers (docker-py) does NOT honour `docker context`,
+      # so DOCKER_HOST must be set explicitly. $HOME would point at the
+      # Woodpecker per-step tempdir (path > AF_UNIX 108-char limit when
+      # joined with /.colima/default/docker.sock), so we ask the docker CLI
+      # for the real endpoint instead.
+      - 'export DOCKER_HOST="$(docker context inspect --format ''{{.Endpoints.docker.Host}}'')"'
       - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
 
   - name: docker-build
     image: bash
     commands:
-      # Same Colima/$HOME rationale as the pytest step — see comment there.
-      - 'export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"'
+      # docker build honours `docker context` on its own — no DOCKER_HOST
+      # plumbing needed, in contrast to the pytest step above.
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
       - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'
