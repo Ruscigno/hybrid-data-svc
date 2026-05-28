@@ -47,24 +47,31 @@ steps:
     commands:
       # Manual build params land as env vars. DEPLOY_MAIN must equal "true"
       # explicitly — anything else (including the unset case) refuses.
-      - 'if [ "${DEPLOY_MAIN:-}" != "true" ]; then echo "Refusing to deploy main: set DEPLOY_MAIN=true in the manual build params (see README §Deployment)."; exit 1; fi'
+      # Brace-less form (`$DEPLOY_MAIN`) so Woodpecker's templater doesn't
+      # try to expand it at YAML-render time.
+      - 'if [ "$DEPLOY_MAIN" != "true" ]; then echo "Refusing to deploy main: set DEPLOY_MAIN=true in the manual build params (see README §Deployment)."; exit 1; fi'
 
   - name: deploy
     image: bash
-    # Whole body lives in a single shell block: empirically, each item in
-    # the Woodpecker local-backend's `commands:` list runs in its OWN
-    # shell (variables defined in one item are NOT visible during
-    # expansion in the next item — see pipeline #46 where OPERATOR_HOME
-    # set in item 1 was empty when item 2 referenced ${OPERATOR_HOME}).
-    # Consolidating into one block scalar eliminates that pitfall.
+    # Whole body in a single shell block — each `commands:` item runs in
+    # its own shell on the local backend, so multi-item recipes lose
+    # variable state between items.
     #
-    # /Users/$(id -un) is the canonical macOS home prefix; the
-    # iac-tickerbeats stack is macOS-only, so /Users/ is safe to assume.
+    # IMPORTANT: avoid the brace form of shell variable expansion in shell
+    # bodies (i.e. dollar-brace-VAR-brace). Woodpecker performs its own
+    # template-interpolation pass on dollar-brace patterns BEFORE the
+    # script reaches bash, and its parser scans the entire YAML file —
+    # comments included — for dollar-brace tokens, choking on nested
+    # forms with "unable to parse variable name". We use the brace-less
+    # $VAR form (which Woodpecker leaves alone) and apply defaults via
+    # explicit `if [ -z "$VAR" ]; then ...; fi` blocks.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        DEPLOY_PATH="${DEPLOY_PATH:-${OPERATOR_HOME}/projects/hybrid-data-svc}"
-        export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"
+        if [ -z "$DEPLOY_PATH" ]; then
+          DEPLOY_PATH="$OPERATOR_HOME/projects/hybrid-data-svc"
+        fi
+        export DOCKER_HOST="unix://$OPERATOR_HOME/.colima/default/docker.sock"
         echo "[deploy] OPERATOR_HOME=$OPERATOR_HOME"
         echo "[deploy] target dir: $DEPLOY_PATH"
         echo "[deploy] DOCKER_HOST=$DOCKER_HOST"
@@ -97,14 +104,32 @@ steps:
 
   - name: healthz
     image: bash
-    # Single shell block — same reason as the deploy step above
-    # (each commands: item runs in its own shell on this backend).
+    # Same `$VAR`-only convention as the deploy step.
+    #
+    # Read REST_HOST_PORT from the host's `.env` (the same file docker
+    # compose loads), so the healthcheck polls whatever port the
+    # container actually publishes to. Without this, we default to :8001
+    # and on a host where 8001 is taken by a sibling project (e.g.
+    # tnr-backend) the poll would get a false-positive HTTP 200 from the
+    # wrong service and report a broken deploy as healthy.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"
-        host_port="${REST_HOST_PORT:-8001}"
-        url="http://localhost:${host_port}/healthz"
+        if [ -z "$DEPLOY_PATH" ]; then
+          DEPLOY_PATH="$OPERATOR_HOME/projects/hybrid-data-svc"
+        fi
+        export DOCKER_HOST="unix://$OPERATOR_HOME/.colima/default/docker.sock"
+        host_port=""
+        if [ -f "$DEPLOY_PATH/.env" ]; then
+          host_port=$(awk -F= '/^REST_HOST_PORT=/{print $2; exit}' "$DEPLOY_PATH/.env")
+        fi
+        if [ -z "$host_port" ]; then
+          host_port="$REST_HOST_PORT"
+        fi
+        if [ -z "$host_port" ]; then
+          host_port="8001"
+        fi
+        url="http://localhost:$host_port/healthz"
         echo "[deploy] polling $url for readiness…"
         for i in $(seq 1 12); do
           code=$(curl -sf -o /dev/null -w "%{http_code}" "$url" || echo 000)
