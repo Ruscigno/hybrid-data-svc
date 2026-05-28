@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nbars.proto\x12\ndatasvc.v1\"}\n\x03\x42\x61r\x12\x0e\n\x02ts\x18\x01 \x01(\x03R\x02ts\x12\x12\n\x04open\x18\x02 \x01(\x01R\x04open\x12\x12\n\x04high\x18\x03 \x01(\x01R\x04high\x12\x10\n\x03low\x18\x04 \x01(\x01R\x03low\x12\x14\n\x05\x63lose\x18\x05 \x01(\x01R\x05\x63lose\x12\x16\n\x06volume\x18\x06 \x01(\x01R\x06volume\"b\n\x14GetRecentBarsRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1c\n\ttimeframe\x18\x02 \x01(\tR\ttimeframe\x12\x14\n\x05\x63ount\x18\x03 \x01(\x05R\x05\x63ount\"3\n\x0c\x42\x61rsResponse\x12#\n\x04\x62\x61rs\x18\x01 \x03(\x0b\x32\x0f.datasvc.v1.BarR\x04\x62\x61rs\"`\n\rHealthRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1c\n\ttimeframe\x18\x02 \x01(\tR\ttimeframe\x12\x19\n\x08min_bars\x18\x03 \x01(\x05R\x07minBars\"m\n\x0eHealthResponse\x12\x14\n\x05ready\x18\x01 \x01(\x08R\x05ready\x12%\n\x0e\x62\x61rs_available\x18\x02 \x01(\x05R\rbarsAvailable\x12\x1e\n\x0blast_bar_ts\x18\x03 \x01(\x03R\tlastBarTs2\x9f\x01\n\nBarService\x12K\n\rGetRecentBars\x12 .datasvc.v1.GetRecentBarsRequest\x1a\x18.datasvc.v1.BarsResponse\x12\x44\n\x0bHealthCheck\x12\x19.datasvc.v1.HealthRequest\x1a\x1a.datasvc.v1.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nbars.proto\x12\ndatasvc.v1\"}\n\x03\x42\x61r\x12\x0e\n\x02ts\x18\x01 \x01(\x03R\x02ts\x12\x12\n\x04open\x18\x02 \x01(\x01R\x04open\x12\x12\n\x04high\x18\x03 \x01(\x01R\x04high\x12\x10\n\x03low\x18\x04 \x01(\x01R\x03low\x12\x14\n\x05\x63lose\x18\x05 \x01(\x01R\x05\x63lose\x12\x16\n\x06volume\x18\x06 \x01(\x01R\x06volume\"b\n\x14GetRecentBarsRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1c\n\ttimeframe\x18\x02 \x01(\tR\ttimeframe\x12\x14\n\x05\x63ount\x18\x03 \x01(\x05R\x05\x63ount\"\x91\x01\n\x15GetBarsInRangeRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1c\n\ttimeframe\x18\x02 \x01(\tR\ttimeframe\x12\x17\n\x07\x66rom_ts\x18\x03 \x01(\x03R\x06\x66romTs\x12\x13\n\x05to_ts\x18\x04 \x01(\x03R\x04toTs\x12\x14\n\x05limit\x18\x05 \x01(\x05R\x05limit\"Q\n\x0c\x42\x61rsResponse\x12#\n\x04\x62\x61rs\x18\x01 \x03(\x0b\x32\x0f.datasvc.v1.BarR\x04\x62\x61rs\x12\x1c\n\ttruncated\x18\x02 \x01(\x08R\ttruncated\"`\n\rHealthRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12\x1c\n\ttimeframe\x18\x02 \x01(\tR\ttimeframe\x12\x19\n\x08min_bars\x18\x03 \x01(\x05R\x07minBars\"m\n\x0eHealthResponse\x12\x14\n\x05ready\x18\x01 \x01(\x08R\x05ready\x12%\n\x0e\x62\x61rs_available\x18\x02 \x01(\x05R\rbarsAvailable\x12\x1e\n\x0blast_bar_ts\x18\x03 \x01(\x03R\tlastBarTs\"\r\n\x0bPingRequest\"1\n\x0cPingResponse\x12!\n\x0c\x64\x62_reachable\x18\x01 \x01(\x08R\x0b\x64\x62Reachable\"\x88\x02\n\x05\x41sset\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\x12%\n\x0estorage_symbol\x18\x02 \x01(\tR\rstorageSymbol\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\x1a\n\x08\x65xchange\x18\x04 \x01(\tR\x08\x65xchange\x12\x1a\n\x08\x63urrency\x18\x05 \x01(\tR\x08\x63urrency\x12\x1f\n\x0b\x61sset_class\x18\x06 \x01(\tR\nassetClass\x12%\n\x0e\x61sset_subclass\x18\x07 \x01(\tR\rassetSubclass\x12\x12\n\x04isin\x18\x08 \x01(\tR\x04isin\x12\x18\n\x07\x63ountry\x18\t \x01(\tR\x07\x63ountry\"0\n\x16GetAssetProfileRequest\x12\x16\n\x06symbol\x18\x01 \x01(\tR\x06symbol\"A\n\x13SearchAssetsRequest\x12\x14\n\x05query\x18\x01 \x01(\tR\x05query\x12\x14\n\x05limit\x18\x02 \x01(\x05R\x05limit\"C\n\x14SearchAssetsResponse\x12+\n\x07results\x18\x01 \x03(\x0b\x32\x11.datasvc.v1.AssetR\x07results2\xa9\x02\n\nBarService\x12K\n\rGetRecentBars\x12 .datasvc.v1.GetRecentBarsRequest\x1a\x18.datasvc.v1.BarsResponse\x12M\n\x0eGetBarsInRange\x12!.datasvc.v1.GetBarsInRangeRequest\x1a\x18.datasvc.v1.BarsResponse\x12\x44\n\x0bHealthCheck\x12\x19.datasvc.v1.HealthRequest\x1a\x1a.datasvc.v1.HealthResponse\x12\x39\n\x04Ping\x12\x17.datasvc.v1.PingRequest\x1a\x18.datasvc.v1.PingResponse2\xa0\x01\n\x0c\x41ssetService\x12\x43\n\nGetProfile\x12\".datasvc.v1.GetAssetProfileRequest\x1a\x11.datasvc.v1.Asset\x12K\n\x06Search\x12\x1f.datasvc.v1.SearchAssetsRequest\x1a .datasvc.v1.SearchAssetsResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,12 +35,28 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_BAR']._serialized_end=151
   _globals['_GETRECENTBARSREQUEST']._serialized_start=153
   _globals['_GETRECENTBARSREQUEST']._serialized_end=251
-  _globals['_BARSRESPONSE']._serialized_start=253
-  _globals['_BARSRESPONSE']._serialized_end=304
-  _globals['_HEALTHREQUEST']._serialized_start=306
-  _globals['_HEALTHREQUEST']._serialized_end=402
-  _globals['_HEALTHRESPONSE']._serialized_start=404
-  _globals['_HEALTHRESPONSE']._serialized_end=513
-  _globals['_BARSERVICE']._serialized_start=516
-  _globals['_BARSERVICE']._serialized_end=675
+  _globals['_GETBARSINRANGEREQUEST']._serialized_start=254
+  _globals['_GETBARSINRANGEREQUEST']._serialized_end=399
+  _globals['_BARSRESPONSE']._serialized_start=401
+  _globals['_BARSRESPONSE']._serialized_end=482
+  _globals['_HEALTHREQUEST']._serialized_start=484
+  _globals['_HEALTHREQUEST']._serialized_end=580
+  _globals['_HEALTHRESPONSE']._serialized_start=582
+  _globals['_HEALTHRESPONSE']._serialized_end=691
+  _globals['_PINGREQUEST']._serialized_start=693
+  _globals['_PINGREQUEST']._serialized_end=706
+  _globals['_PINGRESPONSE']._serialized_start=708
+  _globals['_PINGRESPONSE']._serialized_end=757
+  _globals['_ASSET']._serialized_start=760
+  _globals['_ASSET']._serialized_end=1024
+  _globals['_GETASSETPROFILEREQUEST']._serialized_start=1026
+  _globals['_GETASSETPROFILEREQUEST']._serialized_end=1074
+  _globals['_SEARCHASSETSREQUEST']._serialized_start=1076
+  _globals['_SEARCHASSETSREQUEST']._serialized_end=1141
+  _globals['_SEARCHASSETSRESPONSE']._serialized_start=1143
+  _globals['_SEARCHASSETSRESPONSE']._serialized_end=1210
+  _globals['_BARSERVICE']._serialized_start=1213
+  _globals['_BARSERVICE']._serialized_end=1510
+  _globals['_ASSETSERVICE']._serialized_start=1513
+  _globals['_ASSETSERVICE']._serialized_end=1673
 # @@protoc_insertion_point(module_scope)

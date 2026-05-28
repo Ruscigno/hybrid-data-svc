@@ -17,11 +17,13 @@ def test_healthz_open_no_auth(client):
 
 
 def test_healthz_degraded_when_grpc_unreachable(client):
-    """grpc_reachable=False flips status to degraded."""
+    """grpc_reachable=False flips status to degraded; db_reachable also
+    False because /healthz can no longer reach the server that runs the
+    SELECT 1."""
     client.app.state.grpc_client.set_reachable(False)
     r = client.get("/healthz")
     assert r.status_code == 200
     body = r.json()
     assert body["grpc_reachable"] is False
-    assert body["db_reachable"] is True
+    assert body["db_reachable"] is False
     assert body["status"] == "degraded"

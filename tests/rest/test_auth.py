@@ -1,27 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-
-@pytest.fixture
-def authed_client(pg_url, reset_db, monkeypatch):
-    """Client with REST_AUTH_TOKEN set to 'secret'."""
-    from data_svc.db import postgres as pg_mod
-    pg_mod.close_pool()
-
-    monkeypatch.setenv("POSTGRES_URL", pg_url)
-    monkeypatch.setenv("REST_AUTH_TOKEN", "secret")
-    monkeypatch.setenv("ASSETS_YAML_PATH", "/nonexistent/assets.yaml")
-
-    from fastapi.testclient import TestClient
-
-    from data_svc.rest.app import create_app
-    from data_svc.rest.settings import RestSettings
-
-    settings = RestSettings()
-    with TestClient(create_app(settings)) as c:
-        yield c
-
 
 def test_open_mode_no_token_passes(client):
     """REST_AUTH_TOKEN empty in conftest.app fixture → no Authorization required."""

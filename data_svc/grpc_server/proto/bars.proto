@@ -2,15 +2,36 @@ syntax = "proto3";
 
 package datasvc.v1;
 
+// BarService — OHLCV bars served from Postgres. No TradingView calls.
 service BarService {
-  // Return the most recent `count` closed bars for (symbol, timeframe),
-  // sorted ascending by ts. Bars are read straight from Postgres — no
-  // TradingView call is triggered.
+  // Most recent `count` closed bars for (symbol, timeframe), sorted ASC by ts.
   rpc GetRecentBars(GetRecentBarsRequest) returns (BarsResponse);
 
-  // Readiness check used by clients (bots) before starting trading loops.
+  // Closed bars in the inclusive range [from_ts, to_ts] for (symbol, timeframe).
+  // Capped at `limit` bars (server-enforced max 5000); when more would fit,
+  // returns the most recent `limit` and sets truncated=true.
+  rpc GetBarsInRange(GetBarsInRangeRequest) returns (BarsResponse);
+
+  // Readiness check used by bot clients before starting trading loops.
   // Returns ready=true when bar_count >= min_bars for (symbol, timeframe).
   rpc HealthCheck(HealthRequest) returns (HealthResponse);
+
+  // Liveness ping. Verifies the gRPC server can round-trip AND that its
+  // Postgres pool is reachable (executes a SELECT 1). Used by the REST
+  // gateway's /healthz route to populate db_reachable without holding its
+  // own Postgres connection.
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// AssetService — curated asset catalog (TradingView identifier ↔ ccxt
+// storage_symbol bridge + metadata for /v1/search and /v1/profile).
+service AssetService {
+  // Lookup by TradingView identifier. Returns NOT_FOUND when the symbol
+  // isn't in the catalog.
+  rpc GetProfile(GetAssetProfileRequest) returns (Asset);
+
+  // Substring search (case-insensitive) over (symbol, name).
+  rpc Search(SearchAssetsRequest) returns (SearchAssetsResponse);
 }
 
 message Bar {
@@ -29,8 +50,19 @@ message GetRecentBarsRequest {
   int32 count = 3; // bars to return (server may cap)
 }
 
+message GetBarsInRangeRequest {
+  string symbol = 1; // ccxt-style key
+  string timeframe = 2;
+  int64 from_ts = 3; // inclusive epoch seconds
+  int64 to_ts = 4; // inclusive epoch seconds
+  int32 limit = 5; // 0 or unset -> server default; max 5000
+}
+
 message BarsResponse {
   repeated Bar bars = 1;
+  // True when the underlying range had more bars than `limit` permitted; the
+  // returned set is the MOST RECENT `limit` bars. False/unset otherwise.
+  bool truncated = 2;
 }
 
 message HealthRequest {
@@ -43,4 +75,36 @@ message HealthResponse {
   bool ready = 1;
   int32 bars_available = 2;
   int64 last_bar_ts = 3;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  // True if the gRPC server's Postgres pool returned a row for SELECT 1.
+  bool db_reachable = 1;
+}
+
+message Asset {
+  string symbol = 1; // TradingView identifier, uppercase (REST surface)
+  string storage_symbol = 2; // ccxt key matching bars.symbol
+  string name = 3;
+  string exchange = 4;
+  string currency = 5; // ISO 4217
+  string asset_class = 6; // EQUITY | CRYPTO | ETF | FUND
+  string asset_subclass = 7; // empty when unknown
+  string isin = 8; // empty when unknown
+  string country = 9; // empty when unknown
+}
+
+message GetAssetProfileRequest {
+  string symbol = 1; // TradingView identifier
+}
+
+message SearchAssetsRequest {
+  string query = 1; // substring (case-insensitive)
+  int32 limit = 2; // max results (server caps at 50)
+}
+
+message SearchAssetsResponse {
+  repeated Asset results = 1;
 }
