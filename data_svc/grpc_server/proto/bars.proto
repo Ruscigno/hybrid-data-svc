@@ -3,44 +3,44 @@ syntax = "proto3";
 package datasvc.v1;
 
 service BarService {
-    // Return the most recent `count` closed bars for (symbol, timeframe),
-    // sorted ascending by ts. Bars are read straight from Postgres — no
-    // TradingView call is triggered.
-    rpc GetRecentBars(GetRecentBarsRequest) returns (BarsResponse);
+  // Return the most recent `count` closed bars for (symbol, timeframe),
+  // sorted ascending by ts. Bars are read straight from Postgres — no
+  // TradingView call is triggered.
+  rpc GetRecentBars(GetRecentBarsRequest) returns (BarsResponse);
 
-    // Readiness check used by clients (bots) before starting trading loops.
-    // Returns ready=true when bar_count >= min_bars for (symbol, timeframe).
-    rpc HealthCheck(HealthRequest) returns (HealthResponse);
+  // Readiness check used by clients (bots) before starting trading loops.
+  // Returns ready=true when bar_count >= min_bars for (symbol, timeframe).
+  rpc HealthCheck(HealthRequest) returns (HealthResponse);
 }
 
 message Bar {
-    // Bar open time, unix epoch seconds, UTC.
-    int64  ts     = 1;
-    double open   = 2;
-    double high   = 3;
-    double low    = 4;
-    double close  = 5;
-    double volume = 6;
+  // Bar open time, unix epoch seconds, UTC.
+  int64 ts = 1;
+  double open = 2;
+  double high = 3;
+  double low = 4;
+  double close = 5;
+  double volume = 6;
 }
 
 message GetRecentBarsRequest {
-    string symbol    = 1;   // ccxt-style key, e.g. "BTC/USDT:USDT"
-    string timeframe = 2;   // "15", "30", "1h", "4h", "1D", "1W"
-    int32  count     = 3;   // bars to return (server may cap)
+  string symbol = 1; // ccxt-style key, e.g. "BTC/USDT:USDT"
+  string timeframe = 2; // "15", "30", "1h", "4h", "1D", "1W"
+  int32 count = 3; // bars to return (server may cap)
 }
 
 message BarsResponse {
-    repeated Bar bars = 1;
+  repeated Bar bars = 1;
 }
 
 message HealthRequest {
-    string symbol    = 1;
-    string timeframe = 2;
-    int32  min_bars  = 3;
+  string symbol = 1;
+  string timeframe = 2;
+  int32 min_bars = 3;
 }
 
 message HealthResponse {
-    bool   ready          = 1;
-    int32  bars_available = 2;
-    int64  last_bar_ts    = 3;
+  bool ready = 1;
+  int32 bars_available = 2;
+  int64 last_bar_ts = 3;
 }
