@@ -100,7 +100,11 @@ steps:
         echo "[deploy] HEAD now at $(git rev-parse --short HEAD)"
         # Rebuild only the project services. Postgres has no Dockerfile,
         # so `up -d --build` leaves it alone.
-        docker compose up -d --build bar-grpc bar-rest data-svc
+        # `--remove-orphans` clears stale containers from prior failed
+        # deploys (pipeline #59 broke because of a "989d...-data-svc-1"
+        # orphan that docker compose's stop/recreate couldn't resolve).
+        # Self-heal instead of needing a manual `docker compose down`.
+        docker compose up -d --build --remove-orphans bar-grpc bar-rest data-svc
 
   - name: healthz
     image: bash
