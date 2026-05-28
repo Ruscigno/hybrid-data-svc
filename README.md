@@ -109,6 +109,60 @@ All knobs are environment variables. See [.env.example](.env.example) for defaul
 | `CDP_HOST` | Chrome DevTools host (auto-resolved inside container) | `host.docker.internal` |
 | `CDP_PORT` | CDP port | `9222` |
 
+## Deployment
+
+The repo ships **two** Woodpecker pipelines:
+
+- [`.woodpecker/pr.yml`](.woodpecker/pr.yml) — runs on every PR + push to `main`. Lint + codegen drift + tests + image build. **Does not deploy.**
+- [`.woodpecker/deploy.yml`](.woodpecker/deploy.yml) — runs **only on a manual trigger** from the Woodpecker UI. Pulls `origin/main`, rebuilds the three project services in place, and polls `/healthz` to confirm readiness.
+
+### Triggering a deploy
+
+1. Open the repo in the Woodpecker UI → **New pipeline** → pick `deploy.yml`.
+2. In the build-parameter form, set the variables below and submit.
+
+| Manual build variable | Required | Purpose |
+|---|---|---|
+| `DEPLOY_MAIN` | **yes** (must equal `true`) | Flag authorizing the deploy of `main` to this host. The `guard` step fails the build if this isn't set to the literal string `true`. Anything else (including the unset case) refuses. |
+| `DEPLOY_PATH` | no | Override the host clone location. Default: `$HOME/projects/hybrid-data-svc` (resolved from the runner user's real home via `eval echo "~$(id -un)"`, not the ephemeral per-step `$HOME`). |
+| `REST_HOST_PORT` | no | Override the host port the post-deploy healthcheck polls. Default `8001`. Set this if you also overrode `REST_HOST_PORT` in `.env` on the host. |
+
+> **⚠️ Schema migrations are NOT applied by this pipeline.** The Postgres init scripts under
+> `./migrations/*.sql` are mounted as `/docker-entrypoint-initdb.d/*.sql` and only run on the
+> **very first** initialization of the `pgdata` volume. On a host where the volume already
+> exists, any new migration file added by a PR is **ignored silently** by `docker compose up`.
+>
+> **The `healthz` step still passes with a stale schema** — it only checks gRPC + DB
+> reachability (`SELECT 1`), not table/column structure. A schema-drift bug will only
+> surface at runtime under real query load.
+>
+> If the release you're deploying introduces a new migration file (e.g. `003_*.sql`), apply
+> it manually **before** triggering this pipeline:
+>
+> ```bash
+> docker compose exec -T postgres psql -U datasvc -d datasvc \
+>     -f /docker-entrypoint-initdb.d/003_your_migration.sql
+> ```
+>
+> Audit which migration files are new vs what's currently deployed. Run this from
+> inside `$DEPLOY_PATH` on the host, where `HEAD` points at the production checkout:
+>
+> ```bash
+> git fetch origin main && git diff HEAD..origin/main -- migrations/
+> ```
+
+### What the deploy does (in order)
+
+1. **guard** — refuses to proceed unless `DEPLOY_MAIN=true`.
+2. **deploy** —
+   - validates `$DEPLOY_PATH` exists AND is a git working tree (fails fast with a clear message otherwise)
+   - aborts if the working tree has uncommitted edits to tracked files
+   - `git fetch origin main && git reset --hard origin/main`
+   - `docker compose up -d --build bar-grpc bar-rest data-svc`
+3. **healthz** — polls `http://localhost:$REST_HOST_PORT/healthz` every 5s for up to 60s; fails the build if it never returns `200`.
+
+Pushes to `main` therefore do *not* auto-deploy; deploys are a deliberate operator action.
+
 ## Migrating from SQLite (bars.db)
 
 If you have an existing `bars.db` SQLite file (e.g. from the previous monolithic setup), seed Postgres in one shot:
