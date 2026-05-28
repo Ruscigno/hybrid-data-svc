@@ -45,6 +45,13 @@ class Asset(BaseModel):
     """
     Exchange identifier (typically the prefix before `:` in the symbol).
     """
+    type: Optional[str] = Field(None, examples=["crypto", "stock", "etf", "fund"])
+    """
+    Spec-compatible short type label (e.g. "stock", "crypto"). Mirrors
+    assetClass in lower case for backwards compatibility with the
+    original REST API spec's /v1/search example payload.
+
+    """
     currency: constr(min_length=3, max_length=3)
     """
     ISO 4217 quote currency.
@@ -133,8 +140,14 @@ class HealthResponse(BaseModel):
         populate_by_name=True,
     )
     status: Status
+    grpc_reachable: bool
+    """
+    True if the gateway can reach BarService over the configured GRPC_TARGET.
+    """
     db_reachable: bool
-    assets_loaded: bool
+    """
+    True if the gateway can SELECT 1 against the configured DATABASE_URL.
+    """
 
 
 class ErrorResponse(BaseModel):

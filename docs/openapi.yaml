@@ -4,11 +4,8 @@
 # codegen (`make codegen`) and is asserted byte-equal to FastAPI's runtime
 # `app.openapi()` output by tests/rest/test_openapi_drift.py.
 #
-# Deviations from docs/hybrid-data-svc-rest-api-spec.md (documented):
-#   * /healthz returns {status, db_reachable, assets_loaded}, not
-#     {grpc_reachable, db_reachable}: REST runs in-process over the same
-#     Postgres pool as the gRPC server, with no network gRPC dependency to
-#     probe.
+# Deviations from docs/hybrid-data-svc-rest-api-spec.md (documented in the
+# implementation report):
 #   * Validation-error schemas (HTTPValidationError, ValidationError) are
 #     listed here explicitly so the drift test stays a plain dict equality;
 #     they mirror what FastAPI auto-emits.
@@ -293,6 +290,13 @@ components:
         exchange:
           type: string
           description: Exchange identifier (typically the prefix before `:` in the symbol).
+        type:
+          type: string
+          description: |
+            Spec-compatible short type label (e.g. "stock", "crypto"). Mirrors
+            assetClass in lower case for backwards compatibility with the
+            original REST API spec's /v1/search example payload.
+          examples: ["crypto", "stock", "etf", "fund"]
         currency:
           type: string
           description: ISO 4217 quote currency.
@@ -389,15 +393,17 @@ components:
 
     HealthResponse:
       type: object
-      required: [status, db_reachable, assets_loaded]
+      required: [status, grpc_reachable, db_reachable]
       properties:
         status:
           type: string
           enum: [ok, degraded]
+        grpc_reachable:
+          type: boolean
+          description: True if the gateway can reach BarService over the configured GRPC_TARGET.
         db_reachable:
           type: boolean
-        assets_loaded:
-          type: boolean
+          description: True if the gateway can SELECT 1 against the configured DATABASE_URL.
 
     ErrorResponse:
       type: object

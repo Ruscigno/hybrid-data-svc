@@ -18,6 +18,10 @@ def _row_to_model(r: AssetRow) -> Asset:
         symbol=r.symbol,
         name=r.name,
         exchange=r.exchange,
+        # `type` is the spec-shaped short label (lowercase) used in the
+        # /v1/search example payload. Derived from asset_class so we don't
+        # double-source it.
+        type=r.asset_class.lower() if r.asset_class else None,
         currency=r.currency,
         asset_class=AssetClass(r.asset_class),
         asset_sub_class=r.asset_subclass,
