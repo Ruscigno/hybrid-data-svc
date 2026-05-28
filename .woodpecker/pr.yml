@@ -37,9 +37,13 @@ steps:
   - name: clone
     image: bash
     commands:
-      - rm -rf ./* ./.git 2>/dev/null || true
-      - git init -q
-      - 'git remote add origin "$CI_REPO_CLONE_SSH_URL"'
+      # Use git's own cleanup instead of rm -rf ./* ./.git: preserves the
+      # local .env / .venv between pipeline runs (the workspace is
+      # host-local under backend=local) and avoids paying a full re-fetch +
+      # venv-rebuild cost on every run. The first run won't have a .git
+      # yet, so initialize it on demand.
+      - 'if [ -d .git ]; then git clean -ffdx --exclude=.env --exclude=.venv; else git init -q; fi'
+      - 'git remote get-url origin >/dev/null 2>&1 || git remote add origin "$CI_REPO_CLONE_SSH_URL"'
       - 'git fetch --depth=50 origin "$CI_COMMIT_SHA"'
       - git checkout -q FETCH_HEAD
       # external/tradingview-mcp is a public HTTPS submodule (see .gitmodules)
@@ -116,23 +120,22 @@ steps:
   - name: pytest
     image: bash
     environment:
-      # The local runner has Colima; testcontainers needs the explicit socket
-      # path because docker-py defaults to /var/run/docker.sock.
-      DOCKER_HOST: unix:///Users/sander/.colima/default/docker.sock
       # Bind-mounting the docker socket into Ryuk fails on Colima (virtiofs
       # doesn't support socket mounts). Disable Ryuk; testcontainers prints
       # a warning but otherwise works correctly.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     commands:
+      # Colima socket path is host-user-relative; resolve via $HOME so the
+      # pipeline isn't pinned to one operator's username. testcontainers
+      # needs this explicit because docker-py defaults to /var/run/docker.sock.
+      - 'export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"'
       - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
 
   - name: docker-build
     image: bash
-    environment:
-      # Colima daemon socket — same reason as the pytest step. The default
-      # /var/run/docker.sock doesn't exist on macOS hosts running Colima.
-      DOCKER_HOST: unix:///Users/sander/.colima/default/docker.sock
     commands:
+      # Same Colima/$HOME rationale as the pytest step — see comment there.
+      - 'export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"'
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
       - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'
