@@ -34,6 +34,13 @@
 when:
   - event: manual
 
+# Skip Woodpecker's auto-clone entirely. This pipeline never touches
+# $CI_WORKSPACE; the deploy step `cd`s into the host's pre-existing
+# checkout at $DEPLOY_PATH. Without this, Woodpecker's default clone
+# runs `git lfs fetch` at the end and fails on hosts without git-lfs
+# installed — even though this repo doesn't use LFS.
+skip_clone: true
+
 steps:
   - name: guard
     image: bash
