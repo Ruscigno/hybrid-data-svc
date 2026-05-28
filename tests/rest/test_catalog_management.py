@@ -135,11 +135,12 @@ def test_list_includes_last_bar_ts(client, pg_url, seed_asset, seed_feed, seed_b
     import psycopg
     with psycopg.connect(pg_url, autocommit=True) as conn:
         conn.execute(
-            """INSERT INTO cache_meta (symbol, timeframe, last_bar_ts, updated_at)
-               VALUES (%s, %s, %s, EXTRACT(epoch FROM now())::bigint)
+            """INSERT INTO cache_meta
+                 (symbol, timeframe, last_bar_ts, bar_count, last_fetched_at)
+               VALUES (%s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
                ON CONFLICT (symbol, timeframe) DO UPDATE SET
                  last_bar_ts = EXCLUDED.last_bar_ts""",
-            ("BTC/USDT:USDT", "1h", 1_700_003_600),
+            ("BTC/USDT:USDT", "1h", 1_700_003_600, 2),
         )
     r = client.get("/v1/assets")
     row = next(

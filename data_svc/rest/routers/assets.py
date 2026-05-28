@@ -170,8 +170,12 @@ def create_asset(
                 ),
                 # Pydantic model dump — by_alias so the JSON keys match the
                 # AlreadyExistsResponse schema (`addedAt`, `lastBarTs`).
+                # mode="json" so enums (AssetClass, AssetStatus) become
+                # their string values rather than Enum members — the
+                # default exception handler json.dumps() the dict and
+                # can't serialize Enum instances.
                 "existing": _row_to_status_model(row).model_dump(
-                    by_alias=True, exclude_none=True,
+                    mode="json", by_alias=True, exclude_none=True,
                 ),
             },
         )
