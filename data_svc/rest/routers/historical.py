@@ -11,6 +11,7 @@ import grpc
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from .._responses import HISTORICAL_RESPONSES
+from .._timeframes import rest_to_storage
 from ..auth import require_bearer
 from ..deps import get_grpc_client
 from ..grpc_client import BarServiceClient
@@ -62,7 +63,7 @@ def get_historical(
 
     try:
         rows, truncated = grpc_client.bars_in_range(
-            asset.storage_symbol, interval.value, from_, to, _MAX_BARS
+            asset.storage_symbol, rest_to_storage(interval.value), from_, to, _MAX_BARS
         )
     except grpc.RpcError as exc:
         raise HTTPException(
