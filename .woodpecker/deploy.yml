@@ -1,0 +1,80 @@
+# Manual deploy of hybrid-data-svc onto the local Woodpecker runner host.
+#
+# Triggered ONLY by an explicit "New Pipeline" run in the Woodpecker UI
+# (or via the CLI / API) — pushes to main do NOT auto-deploy. This is by
+# design: deploys are a deliberate operator action.
+#
+# Required parameter (manual-build variable):
+#   CONFIRM = yes
+#     The guard step refuses to proceed without this. Prevents accidental
+#     deploys from "click the manual button to see what it does".
+#
+# Optional parameters:
+#   DEPLOY_PATH        Override the host clone location.
+#                      Default: $HOME/projects/hybrid-data-svc
+#                      (resolved from the runner user's real home, not the
+#                      ephemeral per-step $HOME).
+#   REST_HOST_PORT     Override the host port published by bar-rest in this
+#                      environment (default 8001 from .env / docker-compose).
+#                      The post-deploy healthcheck polls this port.
+#
+# Pipeline:
+#   1. guard       - assert CONFIRM=yes
+#   2. deploy      - git fetch + reset --hard origin/main; docker compose
+#                    up -d --build  (rebuilds all three project services)
+#   3. healthz     - poll http://localhost:$REST_HOST_PORT/healthz for up
+#                    to 60s; fails the build if /healthz never returns 200.
+#
+# Runs on the same macOS local backend as .woodpecker/pr.yml — no $HOME
+# leak, no docker socket leak, no hardcoded usernames.
+
+when:
+  - event: manual
+
+steps:
+  - name: guard
+    image: bash
+    commands:
+      # Manual build params land as env vars. Refuse to proceed unless
+      # CONFIRM=yes is set explicitly — see README §Deployment.
+      - 'if [ "${CONFIRM:-}" != "yes" ]; then echo "Refusing to deploy: set CONFIRM=yes in the manual build params (see README §Deployment)."; exit 1; fi'
+
+  - name: deploy
+    image: bash
+    commands:
+      - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
+      - 'DEPLOY_PATH="${DEPLOY_PATH:-${OPERATOR_HOME}/projects/hybrid-data-svc}"'
+      - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
+      - 'echo "[deploy] target dir: $DEPLOY_PATH"'
+      - 'echo "[deploy] DOCKER_HOST=$DOCKER_HOST"'
+      - 'cd "$DEPLOY_PATH"'
+      # Fail loudly if the working tree has untracked / uncommitted edits
+      # (operator should fix manually, not have deploy clobber them).
+      - 'if [ -n "$(git status --porcelain --untracked-files=no)" ]; then echo "[deploy] working tree is dirty — refusing to git reset:"; git status --short; exit 1; fi'
+      - 'git fetch origin main --quiet'
+      - 'git reset --hard origin/main'
+      - 'echo "[deploy] HEAD now at $(git rev-parse --short HEAD)"'
+      # Rebuild only the project services. Postgres has no Dockerfile so
+      # `up -d --build` leaves it alone.
+      - 'docker compose up -d --build bar-grpc bar-rest data-svc'
+
+  - name: healthz
+    image: bash
+    commands:
+      - 'OPERATOR_HOME="$(eval echo "~$(id -un)")"'
+      - 'export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"'
+      - 'host_port="${REST_HOST_PORT:-8001}"'
+      - 'url="http://localhost:${host_port}/healthz"'
+      - 'echo "[deploy] polling $url for readiness…"'
+      - |-
+        for i in $(seq 1 12); do
+          code=$(curl -sf -o /dev/null -w "%{http_code}" "$url" || echo 000)
+          echo "[deploy]   attempt $i: HTTP $code"
+          if [ "$code" = "200" ]; then
+            echo "[deploy] ✓ healthz green"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "[deploy] ✗ healthz never returned 200 after 60s"
+        exit 1
