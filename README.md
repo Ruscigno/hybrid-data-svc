@@ -124,7 +124,7 @@ The repo ships **two** Woodpecker pipelines:
 | Manual build variable | Required | Purpose |
 |---|---|---|
 | `DEPLOY_MAIN` | **yes** (must equal `true`) | Flag authorizing the deploy of `main` to this host. The `guard` step fails the build if this isn't set to the literal string `true`. Anything else (including the unset case) refuses. |
-| `DEPLOY_PATH` | no | Override the host clone location. Default: `$HOME/projects/hybrid-data-svc` (resolved from the runner user's real home via `eval echo "~$(id -un)"`, not the ephemeral per-step `$HOME`). |
+| `DEPLOY_PATH` | no | Override the host clone location. Default: `/Users/$(id -un)/projects/hybrid-data-svc` — `id -un` resolves to whoever launched the Woodpecker runner, so no operator-name is hardcoded; `/Users/` is the canonical macOS home prefix (the iac-tickerbeats stack is macOS-only). `$HOME` is intentionally not used here — Woodpecker's local-backend overrides it with a per-step tempdir. |
 | `REST_HOST_PORT` | no | Override the host port the post-deploy healthcheck polls. Default `8001`. Set this if you also overrode `REST_HOST_PORT` in `.env` on the host. |
 
 > **⚠️ Schema migrations are NOT applied by this pipeline.** The Postgres init scripts under
