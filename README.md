@@ -127,22 +127,14 @@ The repo ships **two** Woodpecker pipelines:
 | `DEPLOY_PATH` | no | Override the host clone location. Default: `$HOME/projects/hybrid-data-svc` (resolved from the runner user's real home via `eval echo "~$(id -un)"`, not the ephemeral per-step `$HOME`). |
 | `REST_HOST_PORT` | no | Override the host port the post-deploy healthcheck polls. Default `8001`. Set this if you also overrode `REST_HOST_PORT` in `.env` on the host. |
 
-### What the deploy does (in order)
-
-1. **guard** — refuses to proceed unless `DEPLOY_MAIN=true`.
-2. **deploy** —
-   - validates `$DEPLOY_PATH` exists AND is a git working tree (fails fast with a clear message otherwise)
-   - aborts if the working tree has uncommitted edits to tracked files
-   - `git fetch origin main && git reset --hard origin/main`
-   - `docker compose up -d --build bar-grpc bar-rest data-svc`
-3. **healthz** — polls `http://localhost:$REST_HOST_PORT/healthz` every 5s for up to 60s; fails the build if it never returns `200`.
-
-Pushes to `main` therefore do *not* auto-deploy; deploys are a deliberate operator action.
-
 > **⚠️ Schema migrations are NOT applied by this pipeline.** The Postgres init scripts under
 > `./migrations/*.sql` are mounted as `/docker-entrypoint-initdb.d/*.sql` and only run on the
 > **very first** initialization of the `pgdata` volume. On a host where the volume already
 > exists, any new migration file added by a PR is **ignored silently** by `docker compose up`.
+>
+> **The `healthz` step still passes with a stale schema** — it only checks gRPC + DB
+> reachability (`SELECT 1`), not table/column structure. A schema-drift bug will only
+> surface at runtime under real query load.
 >
 > If the release you're deploying introduces a new migration file (e.g. `003_*.sql`), apply
 > it manually **before** triggering this pipeline:
@@ -154,6 +146,18 @@ Pushes to `main` therefore do *not* auto-deploy; deploys are a deliberate operat
 >
 > Audit which migration files are new vs the currently deployed `main` with
 > `git diff $(git rev-parse origin/main)..origin/main -- migrations/`.
+
+### What the deploy does (in order)
+
+1. **guard** — refuses to proceed unless `DEPLOY_MAIN=true`.
+2. **deploy** —
+   - validates `$DEPLOY_PATH` exists AND is a git working tree (fails fast with a clear message otherwise)
+   - aborts if the working tree has uncommitted edits to tracked files
+   - `git fetch origin main && git reset --hard origin/main`
+   - `docker compose up -d --build bar-grpc bar-rest data-svc`
+3. **healthz** — polls `http://localhost:$REST_HOST_PORT/healthz` every 5s for up to 60s; fails the build if it never returns `200`.
+
+Pushes to `main` therefore do *not* auto-deploy; deploys are a deliberate operator action.
 
 ## Migrating from SQLite (bars.db)
 
