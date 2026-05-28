@@ -1,17 +1,13 @@
 """FastAPI application factory.
 
 The factory pattern (rather than a module-level `app = FastAPI()`) is
-required so tests can build isolated instances against an ephemeral
-Postgres, and so the OpenAPI drift test can call create_app().openapi()
-on demand.
+required so tests can build isolated instances against an in-process
+gRPC stub.
 
-Lifespan:
-  1. Open the Postgres pool (shared with BarCache + AssetsRepo).
-  2. Open the long-lived BarService gRPC channel (used by /v1/quote and
-     /healthz — see grpc_client.py).
-  3. Stash AssetsRepo, BarCache, and the gRPC client on app.state.
-  4. Run the assets.yaml sync (idempotent upsert).
-  5. On shutdown — close the gRPC channel and the Postgres pool.
+REST is a **thin gateway** per spec §Motivation: every route delegates to
+BarService or AssetService gRPC; the REST process holds no Postgres
+connection and no business logic. The single gRPC channel is opened on
+startup and torn down on shutdown.
 """
 
 from __future__ import annotations
@@ -27,10 +23,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from ..db.assets import AssetsRepo
-from ..db.cache import BarCache
-from ..db.postgres import close_pool
-from ..services import assets_loader
 from .grpc_client import BarServiceClient
 from .routers import healthz, historical, profile, quote, search
 from .settings import RestSettings
@@ -63,28 +55,13 @@ def _read_openapi_overrides() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings: RestSettings = app.state.settings
-
-    assets_repo = AssetsRepo(settings.postgres_url)
-    bar_cache = BarCache(settings.postgres_url)
     grpc_client = BarServiceClient(settings.grpc_target)
-
-    app.state.assets_repo = assets_repo
-    app.state.bar_cache = bar_cache
     app.state.grpc_client = grpc_client
-
-    try:
-        n = assets_loader.sync(assets_repo, settings.assets_yaml_path, strict=False)
-        logger.info("REST gateway ready; %d asset(s) in catalog", n)
-    except Exception as exc:
-        # Don't kill the gateway on a bad YAML — assets endpoints will
-        # 404 and operators can fix the file.
-        logger.error("assets sync failed at startup: %s", exc)
-
+    logger.info("REST gateway ready; gRPC target=%s", settings.grpc_target)
     try:
         yield
     finally:
         grpc_client.close()
-        close_pool()
 
 
 def create_app(settings: Optional[RestSettings] = None) -> FastAPI:

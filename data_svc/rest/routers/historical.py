@@ -1,24 +1,20 @@
 """/v1/historical/{symbol} — OHLCV bars over a date range.
 
-Thin adapter:
-  1. Resolve TV id → storage id via AssetsRepo.
-  2. Pull rows from BarCache.get_bars_in_range.
-  3. Wrap in HistoricalResponse.
-
-The 5000-bar cap and `truncated` flag are decided in BarCache (sentinel +1
-trick); this router just surfaces the result.
+Thin gateway. Two gRPC calls:
+  1. AssetService.GetProfile to resolve TV → storage_symbol.
+  2. BarService.GetBarsInRange with the resolved storage_symbol.
 """
 
 from __future__ import annotations
 
+import grpc
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from .._responses import HISTORICAL_RESPONSES
 from ..auth import require_bearer
-from ..deps import get_assets_repo, get_bar_cache
+from ..deps import get_grpc_client
+from ..grpc_client import BarServiceClient
 from ..models import Bar, HistoricalResponse, Timeframe
-from ...db.assets import AssetsRepo
-from ...db.cache import BarCache
 
 router = APIRouter(prefix="/v1", tags=["historical"], dependencies=[Depends(require_bearer)])
 
@@ -43,8 +39,7 @@ def get_historical(
     from_: int = Query(..., ge=0, alias="from"),
     to: int = Query(..., ge=0),
     interval: Timeframe = Query(Timeframe.field_1_d),
-    assets: AssetsRepo = Depends(get_assets_repo),
-    bar_cache: BarCache = Depends(get_bar_cache),
+    grpc_client: BarServiceClient = Depends(get_grpc_client),
 ) -> HistoricalResponse:
     if from_ >= to:
         raise HTTPException(
@@ -54,21 +49,33 @@ def get_historical(
                 "message": "`from` must be strictly less than `to`",
             },
         )
-    asset = assets.resolve(symbol)
+
+    asset = grpc_client.get_asset_profile(symbol)
     if asset is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
                 "error": "unknown_symbol",
-                "message": f"{symbol} is not in the asset catalog",
+                "message": f"{symbol} is not in the configured feed list",
             },
         )
-    rows, truncated = bar_cache.get_bars_in_range(
-        asset.storage_symbol, interval.value, from_, to, _MAX_BARS
-    )
+
+    try:
+        rows, truncated = grpc_client.bars_in_range(
+            asset.storage_symbol, interval.value, from_, to, _MAX_BARS
+        )
+    except grpc.RpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "grpc_unavailable",
+                "message": f"BarService unreachable: {exc.code().name if exc.code() else 'UNKNOWN'}",
+            },
+        ) from exc
+
     return HistoricalResponse(
         symbol=asset.symbol,
         interval=interval,
-        bars=[Bar(**r) for r in rows],
+        bars=[Bar(ts=r.ts, open=r.open, high=r.high, low=r.low, close=r.close, volume=r.volume) for r in rows],
         truncated=True if truncated else None,
     )

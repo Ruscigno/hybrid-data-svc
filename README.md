@@ -78,14 +78,17 @@ curl -sf 'http://localhost:8001/v1/quote/BINANCE%3ABTCUSDT' | jq .
 
 ### REST API
 
-The `bar-rest` container exposes an HTTP gateway on `:8001` (host-published as `:8003` to avoid collisions on the shared Mac stack; container-internal port stays `8001`). Use REST from any HTTP client that doesn't speak gRPC (Ghostfolio, Grafana, ad-hoc curl).
+The `bar-rest` container exposes an HTTP gateway on port `8001` for any HTTP client that doesn't speak gRPC (Ghostfolio, Grafana, ad-hoc curl).
 
-- **Architecture**: `/v1/quote` and `/healthz` are thin gateways over `BarService` gRPC (call `bar-grpc:50051`). `/v1/historical`, `/v1/search`, `/v1/profile` read Postgres directly because the existing `bars.proto` has no RPCs for range queries, search, or profile lookups.
-- **Spec**: [docs/openapi.yaml](docs/openapi.yaml) — hand-authored OpenAPI 3.1, source of truth for the REST surface. Pydantic models are generated from it (`make codegen`); a drift test asserts the running app matches.
-- **Swagger UI**: `http://localhost:8003/docs` once the stack is up.
-- **Asset catalog**: [data_svc/assets.yaml](data_svc/assets.yaml) — when you add a new feed to `FEEDS`, add a matching entry here so `/v1/quote`, `/v1/search`, and `/v1/profile` recognize the symbol.
+- **Architecture**: pure thin gateway over `BarService` + `AssetService` gRPC (both served by `bar-grpc:50051`). The REST process holds no Postgres connection of its own; every route is a translation from HTTP into a gRPC call and back. Spec §Motivation.
+- **gRPC API**: see [data_svc/grpc_server/proto/bars.proto](data_svc/grpc_server/proto/bars.proto). `BarService.{GetRecentBars, GetBarsInRange, HealthCheck, Ping}` + `AssetService.{GetProfile, Search}`. Stubs regenerated via `make proto` (`buf generate`).
+- **REST spec**: [docs/openapi.yaml](docs/openapi.yaml) — hand-authored OpenAPI 3.1, source of truth for the REST surface. Pydantic models are generated from it (`make codegen`); a drift test asserts the running app matches.
+- **Swagger UI**: `http://localhost:8001/docs` once the stack is up.
+- **Asset catalog**: [data_svc/assets.yaml](data_svc/assets.yaml) — loaded into the `assets` Postgres table by the `bar-grpc` service at startup. When you add a new feed to `FEEDS`, add a matching entry here so `/v1/quote`, `/v1/search`, and `/v1/profile` recognize the symbol.
 - **Auth**: optional bearer via `REST_AUTH_TOKEN`. Unset = open mode. Set = every `/v1/*` request must carry `Authorization: Bearer <token>`; `/healthz` is always open.
 - **Module path**: both `python -m data_svc.rest` and `python -m data_svc.rest_server` (alias matching the spec) work as entry points.
+- **Host port override**: defaults to `8001:8001`. Set `REST_HOST_PORT=8003` in `.env` if your host already publishes 8001.
+- **Ghostfolio integration**: configure a MANUAL data source with URL `http://hybrid-data-svc-bar-rest:8001/v1/quote/<SYMBOL>` (URL-encode the `:` to `%3A`) and selector `$.price`. The contract is asserted by `tests/rest/test_ghostfolio_contract.py` so it can't regress silently.
 
 ## Configuration
 
@@ -98,11 +101,11 @@ All knobs are environment variables. See [.env.example](.env.example) for defaul
 | `BARS_TO_FETCH` | Bars per TV poll | `300` |
 | `POLL_INTERVAL_SECONDS` | Max sleep between polls (loop auto-adapts to bar close) | `30` |
 | `GRPC_LISTEN` | gRPC server bind | `0.0.0.0:50051` |
-| `GRPC_TARGET` | Where bar-rest connects to BarService gRPC | `bar-grpc:50051` |
+| `GRPC_TARGET` | Where bar-rest connects to BarService + AssetService gRPC | `bar-grpc:50051` |
 | `REST_LISTEN_HOST` | REST gateway bind host | `0.0.0.0` |
 | `REST_LISTEN_PORT` | REST gateway bind port | `8001` |
+| `REST_HOST_PORT` | Host port the bar-rest container publishes to | `8001` |
 | `REST_AUTH_TOKEN` | Optional bearer for `/v1/*` (unset = open mode) | _(empty)_ |
-| `DATABASE_URL` | Alias for `POSTGRES_URL` (spec-compatible) | _(falls back to `POSTGRES_URL`)_ |
 | `CDP_HOST` | Chrome DevTools host (auto-resolved inside container) | `host.docker.internal` |
 | `CDP_PORT` | CDP port | `9222` |
 

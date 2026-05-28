@@ -1,14 +1,15 @@
-"""/v1/profile/{symbol} — asset metadata lookup."""
+"""/v1/profile/{symbol} — thin gateway over AssetService.GetProfile."""
 
 from __future__ import annotations
 
+import grpc
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from .._responses import PROFILE_RESPONSES
 from ..auth import require_bearer
-from ..deps import get_assets_repo
+from ..deps import get_grpc_client
+from ..grpc_client import BarServiceClient
 from ..models import Asset, AssetClass
-from ...db.assets import AssetsRepo
 
 router = APIRouter(prefix="/v1", tags=["profile"], dependencies=[Depends(require_bearer)])
 
@@ -28,15 +29,25 @@ def get_profile(
         max_length=32,
         pattern=r"^[A-Z0-9]+:[A-Z0-9._/-]+$",
     ),
-    assets: AssetsRepo = Depends(get_assets_repo),
+    grpc_client: BarServiceClient = Depends(get_grpc_client),
 ) -> Asset:
-    row = assets.get(symbol)
+    try:
+        row = grpc_client.get_asset_profile(symbol)
+    except grpc.RpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "grpc_unavailable",
+                "message": f"AssetService unreachable: {exc.code().name if exc.code() else 'UNKNOWN'}",
+            },
+        ) from exc
+
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
                 "error": "unknown_symbol",
-                "message": f"{symbol} is not in the asset catalog",
+                "message": f"{symbol} is not in the configured feed list",
             },
         )
     return Asset(

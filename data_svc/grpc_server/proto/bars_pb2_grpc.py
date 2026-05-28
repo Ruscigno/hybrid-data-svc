@@ -6,7 +6,8 @@ import bars_pb2 as bars__pb2
 
 
 class BarServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """BarService — OHLCV bars served from Postgres. No TradingView calls.
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -19,28 +20,56 @@ class BarServiceStub(object):
                 request_serializer=bars__pb2.GetRecentBarsRequest.SerializeToString,
                 response_deserializer=bars__pb2.BarsResponse.FromString,
                 _registered_method=True)
+        self.GetBarsInRange = channel.unary_unary(
+                '/datasvc.v1.BarService/GetBarsInRange',
+                request_serializer=bars__pb2.GetBarsInRangeRequest.SerializeToString,
+                response_deserializer=bars__pb2.BarsResponse.FromString,
+                _registered_method=True)
         self.HealthCheck = channel.unary_unary(
                 '/datasvc.v1.BarService/HealthCheck',
                 request_serializer=bars__pb2.HealthRequest.SerializeToString,
                 response_deserializer=bars__pb2.HealthResponse.FromString,
                 _registered_method=True)
+        self.Ping = channel.unary_unary(
+                '/datasvc.v1.BarService/Ping',
+                request_serializer=bars__pb2.PingRequest.SerializeToString,
+                response_deserializer=bars__pb2.PingResponse.FromString,
+                _registered_method=True)
 
 
 class BarServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """BarService — OHLCV bars served from Postgres. No TradingView calls.
+    """
 
     def GetRecentBars(self, request, context):
-        """Return the most recent `count` closed bars for (symbol, timeframe),
-        sorted ascending by ts. Bars are read straight from Postgres — no
-        TradingView call is triggered.
+        """Most recent `count` closed bars for (symbol, timeframe), sorted ASC by ts.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetBarsInRange(self, request, context):
+        """Closed bars in the inclusive range [from_ts, to_ts] for (symbol, timeframe).
+        Capped at `limit` bars (server-enforced max 5000); when more would fit,
+        returns the most recent `limit` and sets truncated=true.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def HealthCheck(self, request, context):
-        """Readiness check used by clients (bots) before starting trading loops.
+        """Readiness check used by bot clients before starting trading loops.
         Returns ready=true when bar_count >= min_bars for (symbol, timeframe).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Ping(self, request, context):
+        """Liveness ping. Verifies the gRPC server can round-trip AND that its
+        Postgres pool is reachable (executes a SELECT 1). Used by the REST
+        gateway's /healthz route to populate db_reachable without holding its
+        own Postgres connection.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -54,10 +83,20 @@ def add_BarServiceServicer_to_server(servicer, server):
                     request_deserializer=bars__pb2.GetRecentBarsRequest.FromString,
                     response_serializer=bars__pb2.BarsResponse.SerializeToString,
             ),
+            'GetBarsInRange': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetBarsInRange,
+                    request_deserializer=bars__pb2.GetBarsInRangeRequest.FromString,
+                    response_serializer=bars__pb2.BarsResponse.SerializeToString,
+            ),
             'HealthCheck': grpc.unary_unary_rpc_method_handler(
                     servicer.HealthCheck,
                     request_deserializer=bars__pb2.HealthRequest.FromString,
                     response_serializer=bars__pb2.HealthResponse.SerializeToString,
+            ),
+            'Ping': grpc.unary_unary_rpc_method_handler(
+                    servicer.Ping,
+                    request_deserializer=bars__pb2.PingRequest.FromString,
+                    response_serializer=bars__pb2.PingResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -68,7 +107,8 @@ def add_BarServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class BarService(object):
-    """Missing associated documentation comment in .proto file."""
+    """BarService — OHLCV bars served from Postgres. No TradingView calls.
+    """
 
     @staticmethod
     def GetRecentBars(request,
@@ -98,6 +138,33 @@ class BarService(object):
             _registered_method=True)
 
     @staticmethod
+    def GetBarsInRange(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.BarService/GetBarsInRange',
+            bars__pb2.GetBarsInRangeRequest.SerializeToString,
+            bars__pb2.BarsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def HealthCheck(request,
             target,
             options=(),
@@ -114,6 +181,157 @@ class BarService(object):
             '/datasvc.v1.BarService/HealthCheck',
             bars__pb2.HealthRequest.SerializeToString,
             bars__pb2.HealthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Ping(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.BarService/Ping',
+            bars__pb2.PingRequest.SerializeToString,
+            bars__pb2.PingResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class AssetServiceStub(object):
+    """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
+    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.GetProfile = channel.unary_unary(
+                '/datasvc.v1.AssetService/GetProfile',
+                request_serializer=bars__pb2.GetAssetProfileRequest.SerializeToString,
+                response_deserializer=bars__pb2.Asset.FromString,
+                _registered_method=True)
+        self.Search = channel.unary_unary(
+                '/datasvc.v1.AssetService/Search',
+                request_serializer=bars__pb2.SearchAssetsRequest.SerializeToString,
+                response_deserializer=bars__pb2.SearchAssetsResponse.FromString,
+                _registered_method=True)
+
+
+class AssetServiceServicer(object):
+    """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
+    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    """
+
+    def GetProfile(self, request, context):
+        """Lookup by TradingView identifier. Returns NOT_FOUND when the symbol
+        isn't in the catalog.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Search(self, request, context):
+        """Substring search (case-insensitive) over (symbol, name).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_AssetServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'GetProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetProfile,
+                    request_deserializer=bars__pb2.GetAssetProfileRequest.FromString,
+                    response_serializer=bars__pb2.Asset.SerializeToString,
+            ),
+            'Search': grpc.unary_unary_rpc_method_handler(
+                    servicer.Search,
+                    request_deserializer=bars__pb2.SearchAssetsRequest.FromString,
+                    response_serializer=bars__pb2.SearchAssetsResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'datasvc.v1.AssetService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('datasvc.v1.AssetService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class AssetService(object):
+    """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
+    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    """
+
+    @staticmethod
+    def GetProfile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.AssetService/GetProfile',
+            bars__pb2.GetAssetProfileRequest.SerializeToString,
+            bars__pb2.Asset.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Search(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.AssetService/Search',
+            bars__pb2.SearchAssetsRequest.SerializeToString,
+            bars__pb2.SearchAssetsResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -53,11 +53,9 @@ services:
     command: ["python", "-m", "data_svc.grpc_server"]
     restart: unless-stopped
 
-  # Reader: REST gateway. Same image, different command.
-  # /v1/quote and /healthz are thin gateways over BarService gRPC
-  # (spec §Motivation). Phase 2 endpoints (/v1/historical, /v1/search,
-  # /v1/profile) read Postgres directly — see PR description for why
-  # they cannot route through the existing BarService.
+  # Reader: REST gateway. Same image, different command. Pure thin gateway
+  # over BarService + AssetService gRPC — no Postgres connection of its own
+  # (spec §Motivation).
   bar-rest:
     build:
       context: .
@@ -67,20 +65,14 @@ services:
       REST_LISTEN_HOST: 0.0.0.0
       REST_LISTEN_PORT: "8001"
       GRPC_TARGET: bar-grpc:50051
-      DATABASE_URL: postgresql://${POSTGRES_USER:-datasvc}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-datasvc}
     depends_on:
       bar-grpc:
         condition: service_started
-      postgres:
-        condition: service_healthy
     ports:
-      # Host:container — 8001 inside the container (matches spec); host
-      # publication is 8003 because 8001 and 8002 are already owned on
-      # the shared Mac stack (tnr-backend@8001, cnv-backend@8002). The
-      # internal port stays 8001 so consumers on the docker network use
-      # `http://hybrid-data-svc-bar-rest:8001/...` exactly as the spec
-      # documents — only host-side curl/dev access uses 8003.
-      - "8003:8001"
+      # Defaults to the spec literal "8001:8001". Hosts on the shared Mac
+      # stack (where TNR holds 8001 and CNV holds 8002) override via
+      # `REST_HOST_PORT=8003` in .env — value substituted at compose time.
+      - "${REST_HOST_PORT:-8001}:8001"
     command: ["python", "-m", "data_svc.rest_server"]
     healthcheck:
       test:
