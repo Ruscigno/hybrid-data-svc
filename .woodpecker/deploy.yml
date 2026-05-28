@@ -51,20 +51,24 @@ steps:
 
   - name: deploy
     image: bash
-    # Whole body lives in a single shell block: empirically, each item in
-    # the Woodpecker local-backend's `commands:` list runs in its OWN
-    # shell (variables defined in one item are NOT visible during
-    # expansion in the next item — see pipeline #46 where OPERATOR_HOME
-    # set in item 1 was empty when item 2 referenced ${OPERATOR_HOME}).
-    # Consolidating into one block scalar eliminates that pitfall.
+    # Whole body in a single shell block — each `commands:` item runs in
+    # its own shell on the local backend, so multi-item recipes lose
+    # variable state between items.
     #
-    # /Users/$(id -un) is the canonical macOS home prefix; the
-    # iac-tickerbeats stack is macOS-only, so /Users/ is safe to assume.
+    # Note the `$${VAR}` escapes throughout: Woodpecker performs ITS OWN
+    # template interpolation on `${...}` patterns BEFORE handing the
+    # script to bash. Unescaped `${OPERATOR_HOME}` gets substituted with
+    # the empty Woodpecker-side value, leaving bash with a literal empty
+    # prefix at expansion time (see pipeline #47 — OPERATOR_HOME echoed
+    # /Users/sander correctly but DEPLOY_PATH was already mangled to
+    # /projects/hybrid-data-svc because Woodpecker ate the variable
+    # before bash ran the line). `$VAR` (no braces) is NOT touched by
+    # Woodpecker's templater, so plain `$DEPLOY_PATH` stays literal.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        DEPLOY_PATH="${DEPLOY_PATH:-${OPERATOR_HOME}/projects/hybrid-data-svc}"
-        export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"
+        DEPLOY_PATH="$${DEPLOY_PATH:-$${OPERATOR_HOME}/projects/hybrid-data-svc}"
+        export DOCKER_HOST="unix://$${OPERATOR_HOME}/.colima/default/docker.sock"
         echo "[deploy] OPERATOR_HOME=$OPERATOR_HOME"
         echo "[deploy] target dir: $DEPLOY_PATH"
         echo "[deploy] DOCKER_HOST=$DOCKER_HOST"
@@ -97,14 +101,14 @@ steps:
 
   - name: healthz
     image: bash
-    # Single shell block — same reason as the deploy step above
-    # (each commands: item runs in its own shell on this backend).
+    # Same $${VAR} escape rule as the deploy step above — Woodpecker
+    # template-interpolates `${...}` before bash runs the line.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
-        export DOCKER_HOST="unix://${OPERATOR_HOME}/.colima/default/docker.sock"
-        host_port="${REST_HOST_PORT:-8001}"
-        url="http://localhost:${host_port}/healthz"
+        export DOCKER_HOST="unix://$${OPERATOR_HOME}/.colima/default/docker.sock"
+        host_port="$${REST_HOST_PORT:-8001}"
+        url="http://localhost:$${host_port}/healthz"
         echo "[deploy] polling $url for readiness…"
         for i in $(seq 1 12); do
           code=$(curl -sf -o /dev/null -w "%{http_code}" "$url" || echo 000)
