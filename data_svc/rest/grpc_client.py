@@ -53,6 +53,16 @@ class AssetRow:
     country: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class AssetWithStatusRow:
+    """Plain-Python view of a proto AssetWithStatus — used by /v1/assets."""
+
+    asset: AssetRow
+    status: str  # 'active' | 'pending' | 'inactive'
+    added_at: int
+    last_bar_ts: int  # 0 when no bars stored yet
+
+
 def _asset_message_to_row(msg: _pb.Asset) -> AssetRow:
     return AssetRow(
         symbol=msg.symbol,
@@ -66,6 +76,15 @@ def _asset_message_to_row(msg: _pb.Asset) -> AssetRow:
         asset_subclass=msg.asset_subclass or None,
         isin=msg.isin or None,
         country=msg.country or None,
+    )
+
+
+def _asset_with_status_message_to_row(msg: _pb.AssetWithStatus) -> AssetWithStatusRow:
+    return AssetWithStatusRow(
+        asset=_asset_message_to_row(msg.asset),
+        status=msg.status,
+        added_at=int(msg.added_at),
+        last_bar_ts=int(msg.last_bar_ts),
     )
 
 
@@ -194,3 +213,73 @@ class BarServiceClient:
             timeout=timeout,
         )
         return [_asset_message_to_row(m) for m in resp.results]
+
+    def list_assets(
+        self,
+        exchange: Optional[str],
+        asset_class: Optional[str],
+        q: Optional[str],
+        cursor: Optional[str],
+        limit: int,
+        timeout: float = 3.0,
+    ) -> tuple[list[AssetWithStatusRow], Optional[str]]:
+        """Paginated catalog list. Returns (rows, next_cursor).
+
+        next_cursor is None when there are no more pages (proto's empty
+        string sentinel is translated here).
+        """
+        resp = self._assets.ListAssets(
+            _pb.ListAssetsRequest(
+                exchange=exchange or "",
+                asset_class=asset_class or "",
+                query=q or "",
+                cursor=cursor or "",
+                limit=int(limit),
+            ),
+            timeout=timeout,
+        )
+        rows = [_asset_with_status_message_to_row(m) for m in resp.assets]
+        next_cursor = resp.next_cursor or None
+        return rows, next_cursor
+
+    def create_asset(
+        self,
+        asset: AssetRow,
+        timeframes: list[str],
+        tv_symbol: Optional[str],
+        timeout: float = 5.0,
+    ) -> tuple[AssetWithStatusRow, bool, int]:
+        """Create-or-return-existing. Returns (row, created, poll_eta_seconds).
+
+        created=False signals the symbol already existed; the returned row
+        is the existing one (the REST layer translates that into a 409 with
+        the existing row in the body).
+
+        Raises grpc.RpcError on transport or INVALID_ARGUMENT — the REST
+        layer maps INVALID_ARGUMENT to 422 and surfaces transport errors
+        as 503.
+        """
+        asset_msg = _pb.Asset(
+            symbol=asset.symbol,
+            storage_symbol=asset.storage_symbol,
+            name=asset.name,
+            exchange=asset.exchange,
+            currency=asset.currency,
+            asset_class=asset.asset_class,
+            asset_subclass=asset.asset_subclass or "",
+            isin=asset.isin or "",
+            country=asset.country or "",
+        )
+        resp = self._assets.CreateAsset(
+            _pb.CreateAssetRequest(
+                asset=asset_msg,
+                timeframes=list(timeframes),
+                tv_symbol=tv_symbol or "",
+            ),
+            timeout=timeout,
+        )
+        return (
+            _asset_with_status_message_to_row(resp.asset_with_status),
+            bool(resp.created),
+            int(resp.poll_eta_seconds),
+        )

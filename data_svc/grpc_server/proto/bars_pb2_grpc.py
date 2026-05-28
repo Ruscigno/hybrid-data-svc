@@ -221,7 +221,8 @@ class BarService(object):
 
 class AssetServiceStub(object):
     """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
-    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    storage_symbol bridge + metadata for /v1/search and /v1/profile, plus
+    catalog management via /v1/assets).
     """
 
     def __init__(self, channel):
@@ -240,11 +241,22 @@ class AssetServiceStub(object):
                 request_serializer=bars__pb2.SearchAssetsRequest.SerializeToString,
                 response_deserializer=bars__pb2.SearchAssetsResponse.FromString,
                 _registered_method=True)
+        self.ListAssets = channel.unary_unary(
+                '/datasvc.v1.AssetService/ListAssets',
+                request_serializer=bars__pb2.ListAssetsRequest.SerializeToString,
+                response_deserializer=bars__pb2.ListAssetsResponse.FromString,
+                _registered_method=True)
+        self.CreateAsset = channel.unary_unary(
+                '/datasvc.v1.AssetService/CreateAsset',
+                request_serializer=bars__pb2.CreateAssetRequest.SerializeToString,
+                response_deserializer=bars__pb2.CreateAssetResponse.FromString,
+                _registered_method=True)
 
 
 class AssetServiceServicer(object):
     """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
-    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    storage_symbol bridge + metadata for /v1/search and /v1/profile, plus
+    catalog management via /v1/assets).
     """
 
     def GetProfile(self, request, context):
@@ -257,6 +269,24 @@ class AssetServiceServicer(object):
 
     def Search(self, request, context):
         """Substring search (case-insensitive) over (symbol, name).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListAssets(self, request, context):
+        """Paginated catalog list, augmented with per-asset runtime status
+        aggregated from feeds + cache_meta. Backs GET /v1/assets.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateAsset(self, request, context):
+        """Register a new asset + start polling it (one feed row per requested
+        timeframe with status='pending'). Returns the new row with created=true,
+        OR the existing row with created=false when the symbol already exists.
+        Backs POST /v1/assets.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -275,6 +305,16 @@ def add_AssetServiceServicer_to_server(servicer, server):
                     request_deserializer=bars__pb2.SearchAssetsRequest.FromString,
                     response_serializer=bars__pb2.SearchAssetsResponse.SerializeToString,
             ),
+            'ListAssets': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListAssets,
+                    request_deserializer=bars__pb2.ListAssetsRequest.FromString,
+                    response_serializer=bars__pb2.ListAssetsResponse.SerializeToString,
+            ),
+            'CreateAsset': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateAsset,
+                    request_deserializer=bars__pb2.CreateAssetRequest.FromString,
+                    response_serializer=bars__pb2.CreateAssetResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'datasvc.v1.AssetService', rpc_method_handlers)
@@ -285,7 +325,8 @@ def add_AssetServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class AssetService(object):
     """AssetService — curated asset catalog (TradingView identifier ↔ ccxt
-    storage_symbol bridge + metadata for /v1/search and /v1/profile).
+    storage_symbol bridge + metadata for /v1/search and /v1/profile, plus
+    catalog management via /v1/assets).
     """
 
     @staticmethod
@@ -332,6 +373,60 @@ class AssetService(object):
             '/datasvc.v1.AssetService/Search',
             bars__pb2.SearchAssetsRequest.SerializeToString,
             bars__pb2.SearchAssetsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListAssets(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.AssetService/ListAssets',
+            bars__pb2.ListAssetsRequest.SerializeToString,
+            bars__pb2.ListAssetsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateAsset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/datasvc.v1.AssetService/CreateAsset',
+            bars__pb2.CreateAssetRequest.SerializeToString,
+            bars__pb2.CreateAssetResponse.FromString,
             options,
             channel_credentials,
             insecure,

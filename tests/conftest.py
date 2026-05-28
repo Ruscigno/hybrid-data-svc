@@ -54,7 +54,7 @@ def reset_db(pg_url: str) -> None:
     """Truncate all data between tests. Schema stays in place."""
     import psycopg
     with psycopg.connect(pg_url, autocommit=True) as conn:
-        conn.execute("TRUNCATE TABLE bars, cache_meta, assets RESTART IDENTITY")
+        conn.execute("TRUNCATE TABLE bars, cache_meta, assets, feeds RESTART IDENTITY")
 
 
 class _FakeGrpcClient:
@@ -154,6 +154,161 @@ class _FakeGrpcClient:
             for r in rows
         ]
 
+    def list_assets(
+        self,
+        exchange,
+        asset_class,
+        q,
+        cursor,
+        limit: int,
+        timeout: float = 3.0,
+    ):
+        """In-process equivalent of the gRPC ListAssets RPC.
+
+        Goes through the same AssetsRepo.list_with_status query the real
+        servicer uses, so the tests exercise the JOIN/aggregation SQL end
+        to end.
+        """
+        self._check_reachable()
+        from data_svc.rest.grpc_client import (
+            AssetRow as ClientAssetRow,
+        )
+        from data_svc.rest.grpc_client import (
+            AssetWithStatusRow as ClientAssetWithStatusRow,
+        )
+        # Mirror the servicer's clamp.
+        clamped_limit = max(1, min(int(limit) if limit else 100, 500))
+        rows, next_cursor = self._assets_repo.list_with_status(
+            exchange=exchange or None,
+            asset_class=asset_class or None,
+            q=q or None,
+            cursor=cursor or None,
+            limit=clamped_limit,
+        )
+        out = []
+        for r in rows:
+            inner = ClientAssetRow(
+                symbol=r.asset.symbol,
+                storage_symbol=r.asset.storage_symbol,
+                name=r.asset.name,
+                exchange=r.asset.exchange,
+                currency=r.asset.currency,
+                asset_class=r.asset.asset_class,
+                asset_subclass=r.asset.asset_subclass,
+                isin=r.asset.isin,
+                country=r.asset.country,
+            )
+            out.append(
+                ClientAssetWithStatusRow(
+                    asset=inner,
+                    status=r.status,
+                    added_at=r.asset.added_at,
+                    last_bar_ts=r.last_bar_ts,
+                )
+            )
+        return out, next_cursor
+
+    def create_asset(self, asset, timeframes, tv_symbol, timeout: float = 5.0):
+        """In-process equivalent of the gRPC CreateAsset RPC.
+
+        Mirrors AssetServiceServicer.CreateAsset (validation rules + default
+        rules + create_with_feeds call + get_with_status fallback for the
+        already-exists path) so the routing-layer tests exercise the same
+        end-to-end behaviour as production would.
+        """
+        self._check_reachable()
+        import re
+
+            # Local imports to avoid pulling grpc into module scope.
+        import grpc
+
+        from data_svc.db.assets import AssetRow as DbAssetRow
+        from data_svc.db.assets import AssetWithStatusRow as DbAssetWithStatusRow
+        from data_svc.rest.grpc_client import (
+            AssetRow as ClientAssetRow,
+        )
+        from data_svc.rest.grpc_client import (
+            AssetWithStatusRow as ClientAssetWithStatusRow,
+        )
+
+        _TV_SYMBOL_RE = re.compile(r"^[A-Z0-9]+:[A-Z0-9._-]+$")
+        _VALID_ASSET_CLASSES = {"EQUITY", "CRYPTO", "ETF", "FUND"}
+        _DEFAULT_TIMEFRAMES = ("1h",)
+        _POLL_ETA_SECONDS = 30
+
+        class _InvalidArgError(grpc.RpcError):
+            def __init__(self, msg: str) -> None:
+                self._msg = msg
+
+            def code(self):  # noqa: D401
+                return grpc.StatusCode.INVALID_ARGUMENT
+
+            def details(self):  # noqa: D401
+                return self._msg
+
+        # Mirror the servicer's validation. The router maps INVALID_ARGUMENT
+        # to 422, so these become 422 responses in the tests.
+        if not asset.symbol or not _TV_SYMBOL_RE.match(asset.symbol):
+            raise _InvalidArgError("asset.symbol is invalid")
+        if not asset.storage_symbol:
+            raise _InvalidArgError("asset.storage_symbol is required")
+        if not asset.name:
+            raise _InvalidArgError("asset.name is required")
+        if not asset.exchange:
+            raise _InvalidArgError("asset.exchange is required")
+        if not asset.currency:
+            raise _InvalidArgError("asset.currency is required")
+        if asset.asset_class not in _VALID_ASSET_CLASSES:
+            raise _InvalidArgError("asset.asset_class is invalid")
+
+        tfs = list(timeframes) or list(_DEFAULT_TIMEFRAMES)
+        tv = tv_symbol or asset.symbol
+
+        db_row = DbAssetRow(
+            symbol=asset.symbol,
+            storage_symbol=asset.storage_symbol,
+            name=asset.name,
+            exchange=asset.exchange,
+            currency=asset.currency,
+            asset_class=asset.asset_class,
+            asset_subclass=asset.asset_subclass,
+            isin=asset.isin,
+            country=asset.country,
+        )
+        result_row, created = self._assets_repo.create_with_feeds(
+            db_row, tfs, tv,
+        )
+
+        def _to_client(r: DbAssetWithStatusRow) -> ClientAssetWithStatusRow:
+            return ClientAssetWithStatusRow(
+                asset=ClientAssetRow(
+                    symbol=r.asset.symbol,
+                    storage_symbol=r.asset.storage_symbol,
+                    name=r.asset.name,
+                    exchange=r.asset.exchange,
+                    currency=r.asset.currency,
+                    asset_class=r.asset.asset_class,
+                    asset_subclass=r.asset.asset_subclass,
+                    isin=r.asset.isin,
+                    country=r.asset.country,
+                ),
+                status=r.status,
+                added_at=r.asset.added_at,
+                last_bar_ts=r.last_bar_ts,
+            )
+
+        if not created:
+            existing = self._assets_repo.get_with_status(result_row.symbol)
+            assert existing is not None, "row vanished between conflict and re-read"
+            return _to_client(existing), False, _POLL_ETA_SECONDS
+
+        fresh = DbAssetWithStatusRow(
+            asset=result_row,
+            status="pending",
+            last_bar_ts=0,
+        )
+        return _to_client(fresh), True, _POLL_ETA_SECONDS
+
     def close(self) -> None:
         pass
 
@@ -218,6 +373,36 @@ def authed_client(pg_url, reset_db, monkeypatch):
 
 
 @pytest.fixture
+def admin_client(pg_url, reset_db, monkeypatch):
+    """TestClient with REST_ADMIN_TOKEN=admin set (and no REST_AUTH_TOKEN).
+
+    Used by catalog-management tests to verify the admin-token precedence
+    rule in data_svc/rest/auth.py.
+    """
+    from data_svc.db import postgres as pg_mod
+    pg_mod.close_pool()
+
+    monkeypatch.setenv("POSTGRES_URL", pg_url)
+    monkeypatch.setenv("REST_AUTH_TOKEN", "")
+    monkeypatch.setenv("REST_ADMIN_TOKEN", "admin")
+
+    from fastapi.testclient import TestClient
+
+    from data_svc.rest.app import create_app
+    from data_svc.rest.settings import RestSettings
+
+    settings = RestSettings()
+    with TestClient(create_app(settings)) as c:
+        previous = c.app.state.grpc_client
+        try:
+            previous.close()
+        except Exception:
+            pass
+        c.app.state.grpc_client = _FakeGrpcClient(pg_url)
+        yield c
+
+
+@pytest.fixture
 def seed_asset(pg_url: str):
     """Insert an asset row directly into the assets table."""
     import psycopg
@@ -232,18 +417,64 @@ def seed_asset(pg_url: str):
         asset_subclass: str | None = None,
         isin: str | None = None,
         country: str | None = None,
+        added_at: int | None = None,
     ) -> None:
         if exchange is None:
             exchange = symbol.split(":", 1)[0]
         with psycopg.connect(pg_url, autocommit=True) as conn:
+            if added_at is None:
+                conn.execute(
+                    """INSERT INTO assets
+                         (symbol, storage_symbol, name, exchange, currency,
+                          asset_class, asset_subclass, isin, country,
+                          updated_at, added_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               EXTRACT(epoch FROM now())::bigint,
+                               EXTRACT(epoch FROM now())::bigint)
+                       ON CONFLICT (symbol) DO NOTHING""",
+                    (symbol, storage_symbol, name, exchange, currency,
+                     asset_class, asset_subclass, isin, country),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO assets
+                         (symbol, storage_symbol, name, exchange, currency,
+                          asset_class, asset_subclass, isin, country,
+                          updated_at, added_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
+                               EXTRACT(epoch FROM now())::bigint, %s)
+                       ON CONFLICT (symbol) DO NOTHING""",
+                    (symbol, storage_symbol, name, exchange, currency,
+                     asset_class, asset_subclass, isin, country, int(added_at)),
+                )
+
+    return _seed
+
+
+@pytest.fixture
+def seed_feed(pg_url: str):
+    """Insert a feed row directly into the feeds table. Useful for tests
+    that need to verify status aggregation without round-tripping through
+    POST /v1/assets."""
+    import psycopg
+
+    def _seed(
+        storage_symbol: str,
+        timeframe: str,
+        tv_symbol: str | None = None,
+        status: str = "pending",
+    ) -> None:
+        tv = tv_symbol or storage_symbol
+        with psycopg.connect(pg_url, autocommit=True) as conn:
             conn.execute(
-                """INSERT INTO assets
-                     (symbol, storage_symbol, name, exchange, currency,
-                      asset_class, asset_subclass, isin, country, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
-                   ON CONFLICT (symbol) DO NOTHING""",
-                (symbol, storage_symbol, name, exchange, currency,
-                 asset_class, asset_subclass, isin, country),
+                """INSERT INTO feeds
+                     (storage_symbol, timeframe, tv_symbol, status, updated_at)
+                   VALUES (%s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
+                   ON CONFLICT (storage_symbol, timeframe) DO UPDATE SET
+                     tv_symbol  = EXCLUDED.tv_symbol,
+                     status     = EXCLUDED.status,
+                     updated_at = EXCLUDED.updated_at""",
+                (storage_symbol, timeframe, tv, status),
             )
 
     return _seed

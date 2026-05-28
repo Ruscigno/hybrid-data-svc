@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .grpc_client import BarServiceClient
-from .routers import healthz, historical, profile, quote, search
+from .routers import assets, healthz, historical, profile, quote, search
 from .settings import RestSettings
 
 logger = logging.getLogger(__name__)
@@ -84,11 +84,13 @@ def create_app(settings: Optional[RestSettings] = None) -> FastAPI:
 
     # CORS: wildcard origin with allow_credentials=False (browsers reject
     # the combo otherwise). Documented in docs/openapi.yaml header.
+    # POST is for /v1/assets (catalog management); the rest of the surface
+    # is read-only GET.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
         allow_credentials=False,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -97,6 +99,7 @@ def create_app(settings: Optional[RestSettings] = None) -> FastAPI:
     app.include_router(historical.router)
     app.include_router(search.router)
     app.include_router(profile.router)
+    app.include_router(assets.router)
 
     # Unify error responses on the documented ErrorResponse shape when the
     # route raised with detail as a dict; FastAPI's default would wrap the

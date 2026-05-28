@@ -6,9 +6,15 @@ For each configured feed:
   2. If yes  → switches chart (if needed) and fetches from TradingView.
   3. If no   → skips the TV call entirely; cache is mathematically fresh.
 
+The feed list is now driven by the `feeds` Postgres table (Phase 3 of the
+REST API spec). FEEDS env is upserted into that table at startup; further
+additions via POST /v1/assets are picked up by the next poll cycle without
+restart. Pending feeds are promoted to 'active' on first successful insert.
+
 After every cycle the service sleeps until the soonest upcoming bar close
-across all feeds (plus a small grace period). Chart switches are serialized:
-the loop is single-threaded and processes one feed at a time.
+across all currently-polling feeds (plus a small grace period). Chart
+switches are serialized: the loop is single-threaded and processes one
+feed at a time.
 
 Usage: python -m data_svc
 """
@@ -21,7 +27,9 @@ from typing import Optional
 
 from .config import DataSvcConfig, Feed
 from .db.audit import audit_integrity, format_audit
+from .db.feeds import FeedRow, FeedsRepo
 from .fetcher import DataFetchError, DataFetcher, bar_secs
+from .services import feeds_loader
 from .tab_pin import TabPinError
 
 
@@ -41,6 +49,11 @@ def _setup_logging() -> None:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _feedrow_to_feed(row: FeedRow) -> Feed:
+    """Convert the DB row to the Feed NamedTuple the fetcher expects."""
+    return Feed(symbol=row.storage_symbol, timeframe=row.timeframe, tv_symbol=row.tv_symbol)
 
 
 def _sleep_until_next_event(feeds: list[Feed], fetcher: DataFetcher, fallback_s: float) -> None:
@@ -71,14 +84,26 @@ def main() -> None:
         else "auto-discover"
     )
     logger.info(
-        "data-svc starting — %d feed(s) — pg=%s — cdp=%s",
+        "data-svc starting — %d env feed(s) — pg=%s — cdp=%s",
         len(cfg.feeds),
         cfg.postgres_url.split("@")[-1] if "@" in cfg.postgres_url else "<redacted>",
         cdp_origin,
     )
-    for feed in cfg.feeds:
-        logger.info("  %s/%s  tv=%s  bar=%.0fs",
-                    feed.symbol, feed.timeframe, feed.tv_symbol, bar_secs(feed.timeframe))
+
+    # Seed the feeds table from env (idempotent — no-op when rows exist).
+    # The DB is the runtime source of truth from here on.
+    feeds_repo = FeedsRepo(cfg.postgres_url)
+    seeded = feeds_loader.sync(feeds_repo, cfg.feeds)
+    if seeded:
+        logger.info("[feeds-loader] seeded %d new feed row(s)", seeded)
+
+    initial_targets = feeds_repo.polling_targets()
+    for row in initial_targets:
+        logger.info(
+            "  %s/%s  tv=%s  status=%s  bar=%.0fs",
+            row.storage_symbol, row.timeframe, row.tv_symbol, row.status,
+            bar_secs(row.timeframe),
+        )
 
     try:
         fetcher = DataFetcher(cfg)
@@ -86,14 +111,23 @@ def main() -> None:
         logger.error("data-svc startup failed: %s", exc)
         raise SystemExit(1)
 
-    last_ts: dict[tuple[str, str], Optional[int]] = {
-        (f.symbol, f.timeframe): None for f in cfg.feeds
-    }
+    last_ts: dict[tuple[str, str], Optional[int]] = {}
     last_audit_ts: float = 0.0  # fires at first cycle, then every 24h
 
     while True:
-        for feed in cfg.feeds:
+        # Re-read the polling target list at the top of each cycle so newly
+        # POSTed assets (which insert into feeds with status='pending') are
+        # picked up without restart. The list is small (dozens of rows);
+        # one SELECT per cycle is well below the cost of the TV fetches it
+        # gates.
+        targets = feeds_repo.polling_targets()
+        feeds_for_sleep: list[Feed] = []
+        for row in targets:
+            feed = _feedrow_to_feed(row)
+            feeds_for_sleep.append(feed)
             key = (feed.symbol, feed.timeframe)
+            last_ts.setdefault(key, None)  # lazy init for feeds added at runtime
+
             try:
                 df = fetcher.fetch(feed)
                 current_ts = int(df["time"].iloc[-1])
@@ -109,6 +143,10 @@ def main() -> None:
                         feed.symbol, feed.timeframe, current_ts, close,
                     )
                     last_ts[key] = current_ts
+
+                # Promote pending → active. No-op when already active.
+                if row.status == "pending":
+                    feeds_repo.mark_active(feed.symbol, feed.timeframe)
 
             except DataFetchError as exc:
                 logger.warning("[%s/%s] fetch error (retrying next cycle): %s",
@@ -129,7 +167,7 @@ def main() -> None:
                 logger.exception("[AUDIT] integrity audit failed")
             last_audit_ts = now
 
-        _sleep_until_next_event(cfg.feeds, fetcher, cfg.poll_interval_s)
+        _sleep_until_next_event(feeds_for_sleep, fetcher, cfg.poll_interval_s)
 
 
 if __name__ == "__main__":

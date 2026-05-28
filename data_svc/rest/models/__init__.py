@@ -8,13 +8,19 @@ Re-exporting here so callers import from a stable surface even if the
 underlying generator output is reshaped.
 """
 from ._generated import (
+    AlreadyExistsResponse,
     Asset,
     AssetClass,
+    AssetStatus,
+    AssetWithStatus,
     Bar,
+    CreateAssetRequest,
+    CreateAssetResponse,
     ErrorResponse,
     HealthResponse,
     HistoricalResponse,
     HTTPValidationError,
+    ListAssetsResponse,
     Quote,
     SearchResponse,
     Status,
@@ -23,13 +29,19 @@ from ._generated import (
 )
 
 __all__ = [
+    "AlreadyExistsResponse",
     "Asset",
     "AssetClass",
+    "AssetStatus",
+    "AssetWithStatus",
     "Bar",
+    "CreateAssetRequest",
+    "CreateAssetResponse",
     "ErrorResponse",
     "HealthResponse",
     "HistoricalResponse",
     "HTTPValidationError",
+    "ListAssetsResponse",
     "Quote",
     "SearchResponse",
     "Status",

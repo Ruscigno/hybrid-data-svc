@@ -24,7 +24,8 @@ service BarService {
 }
 
 // AssetService — curated asset catalog (TradingView identifier ↔ ccxt
-// storage_symbol bridge + metadata for /v1/search and /v1/profile).
+// storage_symbol bridge + metadata for /v1/search and /v1/profile, plus
+// catalog management via /v1/assets).
 service AssetService {
   // Lookup by TradingView identifier. Returns NOT_FOUND when the symbol
   // isn't in the catalog.
@@ -32,6 +33,16 @@ service AssetService {
 
   // Substring search (case-insensitive) over (symbol, name).
   rpc Search(SearchAssetsRequest) returns (SearchAssetsResponse);
+
+  // Paginated catalog list, augmented with per-asset runtime status
+  // aggregated from feeds + cache_meta. Backs GET /v1/assets.
+  rpc ListAssets(ListAssetsRequest) returns (ListAssetsResponse);
+
+  // Register a new asset + start polling it (one feed row per requested
+  // timeframe with status='pending'). Returns the new row with created=true,
+  // OR the existing row with created=false when the symbol already exists.
+  // Backs POST /v1/assets.
+  rpc CreateAsset(CreateAssetRequest) returns (CreateAssetResponse);
 }
 
 message Bar {
@@ -107,4 +118,44 @@ message SearchAssetsRequest {
 
 message SearchAssetsResponse {
   repeated Asset results = 1;
+}
+
+// Asset wrapped with its runtime status (aggregated from feeds) and the
+// catalog-management metadata (added_at, last_bar_ts). Returned by
+// ListAssets and CreateAsset; the plain Asset message stays as the
+// metadata-only shape used by GetProfile/Search.
+message AssetWithStatus {
+  Asset asset = 1;
+  string status = 2; // 'active' | 'pending' | 'inactive'
+  int64 added_at = 3; // unix seconds; first INSERT, preserved on UPDATE
+  int64 last_bar_ts = 4; // 0 when no bars stored yet
+}
+
+message ListAssetsRequest {
+  string exchange = 1; // empty = no filter
+  string asset_class = 2; // empty = no filter
+  string query = 3; // substring (case-insensitive); empty = no filter
+  string cursor = 4; // last symbol from previous page; empty = first page
+  int32 limit = 5; // 0 = server default (100); server caps at 500
+}
+
+message ListAssetsResponse {
+  repeated AssetWithStatus assets = 1;
+  string next_cursor = 2; // empty when no more pages
+}
+
+message CreateAssetRequest {
+  Asset asset = 1;
+  repeated string timeframes = 2; // empty = server default ["1h"]
+  string tv_symbol = 3; // empty = defaults to asset.symbol
+}
+
+message CreateAssetResponse {
+  AssetWithStatus asset_with_status = 1;
+  // True for fresh INSERT; false when the symbol already existed
+  // (asset_with_status carries the prior row in that case).
+  bool created = 2;
+  // Hint to the operator: roughly how long until the writer picks the new
+  // feeds up. Matches the data-svc cycle interval (~30s).
+  int32 poll_eta_seconds = 3;
 }

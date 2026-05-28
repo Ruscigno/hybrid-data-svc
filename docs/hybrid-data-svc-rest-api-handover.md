@@ -89,6 +89,31 @@ The contract that `$.price` returns a numeric value is gated in CI by `tests/res
 
 ### 2.3 Adding a new feed (operator workflow)
 
+Two equivalent paths — pick by whether you want a permanent record in version control.
+
+**Runtime path — `POST /v1/assets` (no restart, no PR)**. The Phase 3 catalog-management endpoint registers the asset + writes one `feeds` row per requested timeframe with `status='pending'`. `data-svc` picks the new feed up on the next poll cycle (≤30s typical) and flips it to `active` after the first successful bar insert.
+
+```bash
+curl -sf -X POST -H "Authorization: Bearer $REST_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "EXCHANGE:NEWSYMBOL",
+    "storageSymbol": "NEW/SYMBOL:QUOTE",
+    "name": "Human-readable Name",
+    "exchange": "EXCHANGE",
+    "currency": "USD",
+    "assetClass": "CRYPTO",
+    "assetSubClass": "PERP",
+    "timeframes": ["15m", "1h"],
+    "tvSymbol": "EXCHANGE:NEWSYMBOL"
+  }' \
+  http://localhost:8001/v1/assets | jq .
+```
+
+After ~30 seconds: `curl -sf -H "Authorization: Bearer $REST_AUTH_TOKEN" 'http://localhost:8001/v1/assets?q=newsymbol' | jq '.assets[]|{status,lastBarTs}'` — `status` should be `active` and `lastBarTs > 0`. Re-POSTing the same `symbol` returns 409 with the existing row in the body.
+
+**Greenfield path — YAML + env**. Use this for symbols you want committed to source control (e.g. a fresh deploy needs them seeded automatically):
+
 1. Add the feed to `FEEDS` in `.env`:
    ```
    FEEDS=...,NEW/SYMBOL:QUOTE@1h@EXCHANGE:NEWSYMBOL
@@ -104,9 +129,9 @@ The contract that `$.price` returns a numeric value is gated in CI by `tests/res
      asset_subclass: PERP                # free-form, optional
    ```
 3. Commit, PR, merge.
-4. Deploy (next section).
+4. Deploy (next section). On startup, `assets_loader` upserts the YAML rows and `feeds_loader` seeds the `feeds` table from `FEEDS` env (idempotent — no-ops if rows already exist).
 
-Until you add the YAML row, `/v1/quote/EXCHANGE:NEWSYMBOL` returns 404 `unknown_symbol` because `AssetsRepo.resolve()` can't bridge the TV id to a storage symbol. This is intentional — keeps the catalog explicit.
+Until either path has placed an `assets` row for the symbol, `/v1/quote/EXCHANGE:NEWSYMBOL` returns 404 `unknown_symbol` because `AssetsRepo.resolve()` can't bridge the TV id to a storage symbol. This is intentional — keeps the catalog explicit.
 
 ### 2.4 Triggering a deploy
 
