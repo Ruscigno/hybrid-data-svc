@@ -47,7 +47,9 @@ steps:
     commands:
       # Manual build params land as env vars. DEPLOY_MAIN must equal "true"
       # explicitly — anything else (including the unset case) refuses.
-      - 'if [ "${DEPLOY_MAIN:-}" != "true" ]; then echo "Refusing to deploy main: set DEPLOY_MAIN=true in the manual build params (see README §Deployment)."; exit 1; fi'
+      # Brace-less form (`$DEPLOY_MAIN`) so Woodpecker's templater doesn't
+      # try to expand it at YAML-render time.
+      - 'if [ "$DEPLOY_MAIN" != "true" ]; then echo "Refusing to deploy main: set DEPLOY_MAIN=true in the manual build params (see README §Deployment)."; exit 1; fi'
 
   - name: deploy
     image: bash
@@ -55,13 +57,14 @@ steps:
     # its own shell on the local backend, so multi-item recipes lose
     # variable state between items.
     #
-    # IMPORTANT: avoid `${VAR}` (brace form) entirely in shell bodies.
-    # Woodpecker performs its own template-interpolation pass on `${...}`
-    # patterns BEFORE the script reaches bash, and the parser chokes on
-    # nested expressions like `${DEPLOY_PATH:-${OPERATOR_HOME}/...}` with
-    # "unable to parse variable name". We instead use the brace-less
-    # `$VAR` form (which Woodpecker leaves alone) and substitute defaults
-    # with explicit `if [ -z "$VAR" ]; then ...; fi`.
+    # IMPORTANT: avoid the brace form of shell variable expansion in shell
+    # bodies (i.e. dollar-brace-VAR-brace). Woodpecker performs its own
+    # template-interpolation pass on dollar-brace patterns BEFORE the
+    # script reaches bash, and its parser scans the entire YAML file —
+    # comments included — for dollar-brace tokens, choking on nested
+    # forms with "unable to parse variable name". We use the brace-less
+    # $VAR form (which Woodpecker leaves alone) and apply defaults via
+    # explicit `if [ -z "$VAR" ]; then ...; fi` blocks.
     commands:
       - |-
         OPERATOR_HOME="/Users/$(id -un)"
