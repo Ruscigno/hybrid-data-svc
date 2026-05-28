@@ -144,8 +144,12 @@ The repo ships **two** Woodpecker pipelines:
 >     -f /docker-entrypoint-initdb.d/003_your_migration.sql
 > ```
 >
-> Audit which migration files are new vs the currently deployed `main` with
-> `git diff $(git rev-parse origin/main)..origin/main -- migrations/`.
+> Audit which migration files are new vs what's currently deployed. Run this from
+> inside `$DEPLOY_PATH` on the host, where `HEAD` points at the production checkout:
+>
+> ```bash
+> git fetch origin main && git diff HEAD..origin/main -- migrations/
+> ```
 
 ### What the deploy does (in order)
 
