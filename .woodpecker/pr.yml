@@ -24,6 +24,10 @@ when:
       - 'feat/**'
       - 'chore/**'
       - 'fix/**'
+      - 'docs/**'
+      - 'bug/**'
+      - 'ci/**'
+      - 'test/**'
   - event: push
     branch: main
 
@@ -33,11 +37,19 @@ steps:
   - name: clone
     image: bash
     commands:
-      - rm -rf ./* ./.git 2>/dev/null || true
-      - git init -q
-      - 'git remote add origin "$CI_REPO_CLONE_SSH_URL"'
+      # Use git's own cleanup instead of rm -rf ./* ./.git: preserves the
+      # local .env / .venv between pipeline runs (the workspace is
+      # host-local under backend=local) and avoids paying a full re-fetch +
+      # venv-rebuild cost on every run. The first run won't have a .git
+      # yet, so initialize it on demand.
+      - 'if [ -d .git ]; then git clean -ffdx --exclude=.env --exclude=.venv; else git init -q; fi'
+      - 'git remote get-url origin >/dev/null 2>&1 || git remote add origin "$CI_REPO_CLONE_SSH_URL"'
       - 'git fetch --depth=50 origin "$CI_COMMIT_SHA"'
       - git checkout -q FETCH_HEAD
+      # external/tradingview-mcp is a public HTTPS submodule (see .gitmodules)
+      # — the Dockerfile depends on its package.json. Without --init the
+      # docker-build step's `npm install` later fails with ENOENT.
+      - git submodule update --init --recursive --depth=1
 
   - name: secret-scan
     image: bash
@@ -70,7 +82,10 @@ steps:
   - name: openapi-lint
     image: bash
     commands:
-      - spectral lint --ruleset spectral:oas docs/openapi.yaml
+      # .spectral.yaml at the repo root extends spectral:oas. The CLI's
+      # --ruleset flag only accepts paths, not built-in names like
+      # `spectral:oas`, so we rely on auto-discovery of .spectral.yaml.
+      - spectral lint docs/openapi.yaml
 
   - name: venv-setup
     image: bash
@@ -105,19 +120,30 @@ steps:
   - name: pytest
     image: bash
     environment:
-      # The local runner has Colima; testcontainers needs the explicit socket
-      # path because docker-py defaults to /var/run/docker.sock.
-      DOCKER_HOST: unix:///Users/sander/.colima/default/docker.sock
       # Bind-mounting the docker socket into Ryuk fails on Colima (virtiofs
       # doesn't support socket mounts). Disable Ryuk; testcontainers prints
       # a warning but otherwise works correctly.
       TESTCONTAINERS_RYUK_DISABLED: "true"
     commands:
+      # Resolve the operator's home via the user database (POSIX tilde
+      # expansion through `eval echo`), not $HOME — the Woodpecker
+      # local-backend overrides $HOME with a per-step tempdir, and
+      # `docker context inspect` looking under that tempdir falls back to
+      # /var/run/docker.sock (which doesn't exist on macOS with Colima).
+      # testcontainers (docker-py) does not honour `docker context`, so
+      # DOCKER_HOST has to be set explicitly. Portable across operators:
+      # `id -un` returns whoever the runner is launched as.
+      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
       - "$CI_WORKSPACE/.venv/bin/pytest -q tests/"
 
   - name: docker-build
     image: bash
     commands:
+      # Same operator-home resolution as the pytest step. The docker CLI
+      # *does* honour `docker context`, but only when it can find the
+      # context store — and under the Woodpecker per-step $HOME there's
+      # none, so we pin DOCKER_HOST manually here too.
+      - 'export DOCKER_HOST="unix://$(eval echo "~$(id -un)")/.colima/default/docker.sock"'
       # Verify the image builds. No push from PRs; a separate .woodpecker/deploy.yml
       # (out of scope for this PR) handles publish + restart on push to main.
       - 'docker build -t hybrid-data-svc:ci-$CI_COMMIT_SHA .'
