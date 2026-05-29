@@ -22,6 +22,11 @@ class RestSettings(BaseSettings):
     rest_listen_host: str = Field(default="0.0.0.0")
     rest_listen_port: int = Field(default=8001, ge=1, le=65535)
     rest_auth_token: str = Field(default="")
+    # Separate token for catalog-mutating routes (POST /v1/assets).
+    # When set: writes require this token; reads still accept rest_auth_token.
+    # When unset: writes fall back to rest_auth_token (or open mode when
+    # both are empty). See data_svc/rest/auth.py for the precedence rule.
+    rest_admin_token: str = Field(default="")
     # Target of the BarService + AssetService gRPC. Spec compose snippet
     # documents this as GRPC_TARGET.
     grpc_target: str = Field(default="bar-grpc:50051")

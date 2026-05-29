@@ -124,3 +124,57 @@ class SearchAssetsResponse(_message.Message):
     RESULTS_FIELD_NUMBER: _ClassVar[int]
     results: _containers.RepeatedCompositeFieldContainer[Asset]
     def __init__(self, results: _Optional[_Iterable[_Union[Asset, _Mapping]]] = ...) -> None: ...
+
+class AssetWithStatus(_message.Message):
+    __slots__ = ("asset", "status", "added_at", "last_bar_ts")
+    ASSET_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    ADDED_AT_FIELD_NUMBER: _ClassVar[int]
+    LAST_BAR_TS_FIELD_NUMBER: _ClassVar[int]
+    asset: Asset
+    status: str
+    added_at: int
+    last_bar_ts: int
+    def __init__(self, asset: _Optional[_Union[Asset, _Mapping]] = ..., status: _Optional[str] = ..., added_at: _Optional[int] = ..., last_bar_ts: _Optional[int] = ...) -> None: ...
+
+class ListAssetsRequest(_message.Message):
+    __slots__ = ("exchange", "asset_class", "query", "cursor", "limit")
+    EXCHANGE_FIELD_NUMBER: _ClassVar[int]
+    ASSET_CLASS_FIELD_NUMBER: _ClassVar[int]
+    QUERY_FIELD_NUMBER: _ClassVar[int]
+    CURSOR_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    exchange: str
+    asset_class: str
+    query: str
+    cursor: str
+    limit: int
+    def __init__(self, exchange: _Optional[str] = ..., asset_class: _Optional[str] = ..., query: _Optional[str] = ..., cursor: _Optional[str] = ..., limit: _Optional[int] = ...) -> None: ...
+
+class ListAssetsResponse(_message.Message):
+    __slots__ = ("assets", "next_cursor")
+    ASSETS_FIELD_NUMBER: _ClassVar[int]
+    NEXT_CURSOR_FIELD_NUMBER: _ClassVar[int]
+    assets: _containers.RepeatedCompositeFieldContainer[AssetWithStatus]
+    next_cursor: str
+    def __init__(self, assets: _Optional[_Iterable[_Union[AssetWithStatus, _Mapping]]] = ..., next_cursor: _Optional[str] = ...) -> None: ...
+
+class CreateAssetRequest(_message.Message):
+    __slots__ = ("asset", "timeframes", "tv_symbol")
+    ASSET_FIELD_NUMBER: _ClassVar[int]
+    TIMEFRAMES_FIELD_NUMBER: _ClassVar[int]
+    TV_SYMBOL_FIELD_NUMBER: _ClassVar[int]
+    asset: Asset
+    timeframes: _containers.RepeatedScalarFieldContainer[str]
+    tv_symbol: str
+    def __init__(self, asset: _Optional[_Union[Asset, _Mapping]] = ..., timeframes: _Optional[_Iterable[str]] = ..., tv_symbol: _Optional[str] = ...) -> None: ...
+
+class CreateAssetResponse(_message.Message):
+    __slots__ = ("asset_with_status", "created", "poll_eta_seconds")
+    ASSET_WITH_STATUS_FIELD_NUMBER: _ClassVar[int]
+    CREATED_FIELD_NUMBER: _ClassVar[int]
+    POLL_ETA_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    asset_with_status: AssetWithStatus
+    created: bool
+    poll_eta_seconds: int
+    def __init__(self, asset_with_status: _Optional[_Union[AssetWithStatus, _Mapping]] = ..., created: bool = ..., poll_eta_seconds: _Optional[int] = ...) -> None: ...

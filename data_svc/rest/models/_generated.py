@@ -130,6 +130,131 @@ class SearchResponse(BaseModel):
     results: List[Asset]
 
 
+class AssetStatus(Enum):
+    """
+    Per-asset polling status, aggregated from the runtime `feeds` table:
+      * `active`   — at least one feed has produced a bar.
+      * `pending`  — feeds registered, no bars yet (writer hasn't run a
+        successful cycle for this symbol).
+      * `inactive` — feeds explicitly disabled.
+
+    """
+
+    active = "active"
+    pending = "pending"
+    inactive = "inactive"
+
+
+class AssetWithStatus(BaseModel):
+    """
+    Catalog row + runtime polling state.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    asset: Asset
+    status: AssetStatus
+    added_at: int = Field(..., alias="addedAt")
+    """
+    Unix seconds — when the asset was first inserted into the catalog. Preserved across upserts.
+    """
+    last_bar_ts: int = Field(..., alias="lastBarTs")
+    """
+    Most recent bar timestamp (epoch seconds, UTC) across all polling timeframes. `0` when no bars are stored yet.
+    """
+
+
+class ListAssetsResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    assets: List[AssetWithStatus]
+    next_cursor: Optional[str] = Field(None, alias="nextCursor")
+    """
+    Cursor for the next page. Omitted on the final page.
+    """
+
+
+class CreateAssetRequest(BaseModel):
+    """
+    Body for `POST /v1/assets`. Combines the catalog metadata (`symbol`,
+    `name`, `exchange`, …) with the wiring fields the writer needs
+    (`storageSymbol`, `tvSymbol`, `timeframes`).
+
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    symbol: constr(pattern=r"^[A-Z0-9]+:[A-Z0-9._-]+$", min_length=3, max_length=32) = (
+        Field(..., examples=["BINANCE:DOGEUSDT"])
+    )
+    """
+    TradingView identifier, uppercase, `:`-separated.
+    """
+    storage_symbol: constr(min_length=1, max_length=64) = Field(
+        ..., alias="storageSymbol"
+    )
+    """
+    Internal ccxt key used as `bars.symbol` (e.g. `DOGE/USDT:USDT`).
+    """
+    name: constr(min_length=1, max_length=128)
+    exchange: constr(min_length=1, max_length=64)
+    currency: constr(min_length=3, max_length=3)
+    """
+    ISO 4217 quote currency.
+    """
+    asset_class: AssetClass = Field(..., alias="assetClass")
+    asset_sub_class: Optional[constr(max_length=32)] = Field(
+        None, alias="assetSubClass"
+    )
+    """
+    Free-form sub-class (e.g. SPOT, PERP, COMMON).
+    """
+    isin: Optional[constr(min_length=12, max_length=12)] = None
+    country: Optional[constr(min_length=2, max_length=2)] = None
+    timeframes: Optional[List[Timeframe]] = Field(None, max_length=12)
+    """
+    Timeframes to poll. Defaults to `["1h"]` when empty/omitted.
+    """
+    tv_symbol: Optional[constr(max_length=64)] = Field(None, alias="tvSymbol")
+    """
+    TradingView chart identifier used by the data-svc CLI. Defaults to `symbol` when omitted.
+    """
+
+
+class CreateAssetResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    asset: AssetWithStatus
+    created: bool
+    """
+    True for a fresh insert; false when the symbol already existed (in which case the response is a 409, not a 201).
+    """
+    poll_eta_seconds: int = Field(..., alias="pollEtaSeconds")
+    """
+    Approximate seconds until the writer's next poll cycle picks up the new feed.
+    """
+
+
+class AlreadyExistsResponse(BaseModel):
+    """
+    409 body for `POST /v1/assets` when the symbol already exists.
+    """
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    error: str
+    """
+    Machine-readable error code (`already_exists`).
+    """
+    message: str
+    existing: AssetWithStatus
+
+
 class Status(Enum):
     ok = "ok"
     degraded = "degraded"

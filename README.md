@@ -84,11 +84,41 @@ The `bar-rest` container exposes an HTTP gateway on port `8001` for any HTTP cli
 - **gRPC API**: see [data_svc/grpc_server/proto/bars.proto](data_svc/grpc_server/proto/bars.proto). `BarService.{GetRecentBars, GetBarsInRange, HealthCheck, Ping}` + `AssetService.{GetProfile, Search}`. Stubs regenerated via `make proto` (`buf generate`).
 - **REST spec**: [docs/openapi.yaml](docs/openapi.yaml) — hand-authored OpenAPI 3.1, source of truth for the REST surface. Pydantic models are generated from it (`make codegen`); a drift test asserts the running app matches.
 - **Swagger UI**: `http://localhost:8001/docs` once the stack is up.
-- **Asset catalog**: [data_svc/assets.yaml](data_svc/assets.yaml) — loaded into the `assets` Postgres table by the `bar-grpc` service at startup. When you add a new feed to `FEEDS`, add a matching entry here so `/v1/quote`, `/v1/search`, and `/v1/profile` recognize the symbol.
-- **Auth**: optional bearer via `REST_AUTH_TOKEN`. Unset = open mode. Set = every `/v1/*` request must carry `Authorization: Bearer <token>`; `/healthz` is always open.
+- **Asset catalog**: [data_svc/assets.yaml](data_svc/assets.yaml) — loaded into the `assets` Postgres table by the `bar-grpc` service at startup. This stays the *greenfield seed* mechanism; for runtime additions use `POST /v1/assets` (see [Catalog management](#catalog-management) below). `FEEDS` env is seeded into the `feeds` runtime table at startup; both env and YAML are upserts (no-op on subsequent runs).
+- **Auth**: optional bearer via `REST_AUTH_TOKEN` for reads (`/v1/quote`, `/v1/historical`, `/v1/search`, `/v1/profile`, `GET /v1/assets`). Optional separate `REST_ADMIN_TOKEN` for writes (`POST /v1/assets`); when unset, writes fall back to `REST_AUTH_TOKEN`. When both are unset the gateway runs in open mode. `/healthz` is always open.
 - **Module path**: both `python -m data_svc.rest` and `python -m data_svc.rest_server` (alias matching the spec) work as entry points.
 - **Host port override**: defaults to `8001:8001`. Set `REST_HOST_PORT=8003` in `.env` if your host already publishes 8001.
 - **Ghostfolio integration**: configure a MANUAL data source with URL `http://hybrid-data-svc-bar-rest:8001/v1/quote/<SYMBOL>` (URL-encode the `:` to `%3A`) and selector `$.price`. The contract is asserted by `tests/rest/test_ghostfolio_contract.py` so it can't regress silently.
+
+#### Catalog management
+
+`GET /v1/assets` returns the curated catalog with per-asset polling status (`active` / `pending` / `inactive`) and the most recent bar timestamp; supports filtering (`exchange`, `asset_class`, `q`) and cursor pagination (`cursor`, `limit`).
+
+`POST /v1/assets` onboards a new symbol at runtime — no YAML edit, no env edit, no restart. The body carries the catalog metadata plus the wiring fields the writer needs (`storageSymbol`, `tvSymbol`, `timeframes`). The endpoint writes the `assets` row and one `feeds` row per requested timeframe with `status='pending'`; the `data-svc` writer picks the new feeds up on its next poll cycle (≤30s typical) and flips them to `active` after the first successful bar insert.
+
+```bash
+# Read (uses REST_AUTH_TOKEN)
+curl -sf -H "Authorization: Bearer $REST_AUTH_TOKEN" \
+  'http://localhost:8001/v1/assets?q=btc' | jq .
+
+# Onboard (uses REST_ADMIN_TOKEN; falls back to REST_AUTH_TOKEN when unset)
+curl -sf -X POST -H "Authorization: Bearer $REST_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol": "BINANCE:DOGEUSDT",
+    "storageSymbol": "DOGE/USDT:USDT",
+    "name": "Dogecoin / Tether USD",
+    "exchange": "BINANCE",
+    "currency": "USD",
+    "assetClass": "CRYPTO",
+    "assetSubClass": "PERP",
+    "timeframes": ["15m", "1h"],
+    "tvSymbol": "BINANCE:DOGEUSDTPERP"
+  }' \
+  http://localhost:8001/v1/assets | jq .
+```
+
+Re-POSTing the same `symbol` returns `409 Conflict` with the existing row in the body — no duplicate inserts, no surprise overwrites.
 
 ## Configuration
 
@@ -105,7 +135,8 @@ All knobs are environment variables. See [.env.example](.env.example) for defaul
 | `REST_LISTEN_HOST` | REST gateway bind host | `0.0.0.0` |
 | `REST_LISTEN_PORT` | REST gateway bind port | `8001` |
 | `REST_HOST_PORT` | Host port the bar-rest container publishes to | `8001` |
-| `REST_AUTH_TOKEN` | Optional bearer for `/v1/*` (unset = open mode) | _(empty)_ |
+| `REST_AUTH_TOKEN` | Optional bearer for `/v1/*` reads (unset = open mode) | _(empty)_ |
+| `REST_ADMIN_TOKEN` | Optional bearer required for `POST /v1/assets` (unset = falls back to `REST_AUTH_TOKEN`, or open mode if that's also unset) | _(empty)_ |
 | `CDP_HOST` | Chrome DevTools host (auto-resolved inside container) | `host.docker.internal` |
 | `CDP_PORT` | CDP port | `9222` |
 

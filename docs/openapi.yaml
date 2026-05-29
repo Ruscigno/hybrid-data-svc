@@ -43,6 +43,8 @@ tags:
     description: Asset autocomplete.
   - name: profile
     description: Asset metadata lookup.
+  - name: catalog
+    description: Catalog management — list and onboard polled symbols at runtime.
   - name: health
     description: Liveness probe.
 
@@ -197,6 +199,112 @@ paths:
         "422":
           $ref: "#/components/responses/ValidationFailed"
 
+  /v1/assets:
+    get:
+      tags: [catalog]
+      summary: List the curated asset catalog with per-asset polling status.
+      operationId: listAssets
+      description: |
+        Paginated, filterable view of the catalog. Each row carries the asset
+        metadata plus the aggregated polling status (`active` / `pending` /
+        `inactive`) computed from the runtime `feeds` table and the most
+        recent bar timestamp.
+
+        Cursor pagination: pass `cursor=<last symbol on previous page>` to
+        get the next page. `nextCursor` in the response is omitted on the
+        final page.
+      parameters:
+        - name: exchange
+          in: query
+          required: false
+          description: Filter by exchange (case-sensitive, exact match).
+          schema:
+            type: string
+            maxLength: 64
+        - name: asset_class
+          in: query
+          required: false
+          description: Filter by asset class.
+          schema:
+            $ref: "#/components/schemas/AssetClass"
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring matched against `symbol` and `name`.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: cursor
+          in: query
+          required: false
+          description: Last `symbol` from the previous page (exclusive lower bound).
+          schema:
+            type: string
+            maxLength: 32
+        - name: limit
+          in: query
+          required: false
+          description: Maximum rows to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Paginated catalog, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListAssetsResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/GrpcUnavailable"
+    post:
+      tags: [catalog]
+      summary: Onboard a new asset and start polling its feeds.
+      operationId: createAsset
+      description: |
+        Registers the asset row and writes one `feeds` row per requested
+        timeframe with `status=pending`. The data-svc writer picks the new
+        feed up at the top of its next poll cycle (typically within
+        `pollEtaSeconds`) and flips the status to `active` after the first
+        successful bar insert.
+
+        Returns `201 Created` for a fresh insert and `409 Conflict` when the
+        symbol already exists — the 409 body carries the existing row.
+      security:
+        - bearerAdmin: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetRequest"
+      responses:
+        "201":
+          description: Asset created; polling starts within `pollEtaSeconds`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAssetResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Symbol already exists. The response body carries the existing row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlreadyExistsResponse"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "503":
+          $ref: "#/components/responses/GrpcUnavailable"
+
 components:
   securitySchemes:
     bearer:
@@ -206,6 +314,15 @@ components:
         Optional bearer auth. When the `REST_AUTH_TOKEN` env var is set,
         every `/v1/*` call must include `Authorization: Bearer <token>`;
         missing/invalid → 401. `/healthz` is always open.
+    bearerAdmin:
+      type: http
+      scheme: bearer
+      description: |
+        Admin bearer auth — required for catalog-mutating routes
+        (`POST /v1/assets`). When `REST_ADMIN_TOKEN` is set, callers must
+        present **this** token; when it is unset, `REST_AUTH_TOKEN` is
+        accepted as a fallback. When both are unset the gateway runs in
+        open mode (matches the rest of `/v1/*`).
 
   parameters:
     SymbolPath:
@@ -255,6 +372,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/HTTPValidationError"
+    GrpcUnavailable:
+      description: Upstream gRPC unreachable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   schemas:
     Timeframe:
@@ -390,6 +513,128 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Asset"
+
+    AssetStatus:
+      type: string
+      description: |
+        Per-asset polling status, aggregated from the runtime `feeds` table:
+          * `active`   — at least one feed has produced a bar.
+          * `pending`  — feeds registered, no bars yet (writer hasn't run a
+            successful cycle for this symbol).
+          * `inactive` — feeds explicitly disabled.
+      enum: [active, pending, inactive]
+
+    AssetWithStatus:
+      type: object
+      description: Catalog row + runtime polling state.
+      required: [asset, status, addedAt, lastBarTs]
+      properties:
+        asset:
+          $ref: "#/components/schemas/Asset"
+        status:
+          $ref: "#/components/schemas/AssetStatus"
+        addedAt:
+          type: integer
+          description: Unix seconds — when the asset was first inserted into the catalog. Preserved across upserts.
+        lastBarTs:
+          type: integer
+          description: Most recent bar timestamp (epoch seconds, UTC) across all polling timeframes. `0` when no bars are stored yet.
+
+    ListAssetsResponse:
+      type: object
+      required: [assets]
+      properties:
+        assets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssetWithStatus"
+        nextCursor:
+          type: string
+          description: Cursor for the next page. Omitted on the final page.
+
+    CreateAssetRequest:
+      type: object
+      description: |
+        Body for `POST /v1/assets`. Combines the catalog metadata (`symbol`,
+        `name`, `exchange`, …) with the wiring fields the writer needs
+        (`storageSymbol`, `tvSymbol`, `timeframes`).
+      required: [symbol, storageSymbol, name, exchange, currency, assetClass]
+      properties:
+        symbol:
+          type: string
+          description: TradingView identifier, uppercase, `:`-separated.
+          pattern: "^[A-Z0-9]+:[A-Z0-9._-]+$"
+          minLength: 3
+          maxLength: 32
+          examples: ["BINANCE:DOGEUSDT"]
+        storageSymbol:
+          type: string
+          description: Internal ccxt key used as `bars.symbol` (e.g. `DOGE/USDT:USDT`).
+          minLength: 1
+          maxLength: 64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        exchange:
+          type: string
+          minLength: 1
+          maxLength: 64
+        currency:
+          type: string
+          description: ISO 4217 quote currency.
+          minLength: 3
+          maxLength: 3
+        assetClass:
+          $ref: "#/components/schemas/AssetClass"
+        assetSubClass:
+          type: string
+          description: Free-form sub-class (e.g. SPOT, PERP, COMMON).
+          maxLength: 32
+        isin:
+          type: string
+          minLength: 12
+          maxLength: 12
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+        timeframes:
+          type: array
+          description: Timeframes to poll. Defaults to `["1h"]` when empty/omitted.
+          items:
+            $ref: "#/components/schemas/Timeframe"
+          maxItems: 12
+        tvSymbol:
+          type: string
+          description: TradingView chart identifier used by the data-svc CLI. Defaults to `symbol` when omitted.
+          maxLength: 64
+
+    CreateAssetResponse:
+      type: object
+      required: [asset, created, pollEtaSeconds]
+      properties:
+        asset:
+          $ref: "#/components/schemas/AssetWithStatus"
+        created:
+          type: boolean
+          description: True for a fresh insert; false when the symbol already existed (in which case the response is a 409, not a 201).
+        pollEtaSeconds:
+          type: integer
+          description: Approximate seconds until the writer's next poll cycle picks up the new feed.
+
+    AlreadyExistsResponse:
+      type: object
+      description: 409 body for `POST /v1/assets` when the symbol already exists.
+      required: [error, message, existing]
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code (`already_exists`).
+        message:
+          type: string
+        existing:
+          $ref: "#/components/schemas/AssetWithStatus"
 
     HealthResponse:
       type: object

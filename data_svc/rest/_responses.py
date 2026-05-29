@@ -7,7 +7,7 @@ code in a router, declare it here too, and add it to docs/openapi.yaml.
 
 from __future__ import annotations
 
-from .models import ErrorResponse
+from .models import AlreadyExistsResponse, ErrorResponse
 
 
 _unauthorized = {
@@ -25,6 +25,14 @@ _no_data = {
 _bad_range = {
     "model": ErrorResponse,
     "description": "Invalid query parameters (e.g. `from >= to`, unsupported interval).",
+}
+_grpc_unavailable = {
+    "model": ErrorResponse,
+    "description": "Upstream gRPC unreachable.",
+}
+_already_exists = {
+    "model": AlreadyExistsResponse,
+    "description": "Symbol already exists. The response body carries the existing row.",
 }
 
 
@@ -47,4 +55,15 @@ SEARCH_RESPONSES = {
 PROFILE_RESPONSES = {
     401: _unauthorized,
     404: _unknown_symbol,
+}
+
+CATALOG_LIST_RESPONSES = {
+    401: _unauthorized,
+    503: _grpc_unavailable,
+}
+
+CATALOG_CREATE_RESPONSES = {
+    401: _unauthorized,
+    409: _already_exists,
+    503: _grpc_unavailable,
 }
