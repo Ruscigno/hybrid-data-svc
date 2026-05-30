@@ -155,7 +155,7 @@ UPDATE <N>
 ALTER TABLE
 ```
 
-A linha `UPDATE <N>` reflete quantas linhas de `assets` foram backfillladas com `added_at = updated_at`. Em produção foram 5.
+A linha `UPDATE <N>` reflete quantas linhas de `assets` receberam backfill de `added_at = updated_at`. Em produção foram 5.
 
 Depois disso, gerar e gravar o token admin (sem ecoar no terminal):
 
@@ -173,8 +173,8 @@ E acionar o deploy via Woodpecker (`DEPLOY_MAIN=true`).
 |---|---|
 | Pipeline de deploy | `guard ✅ deploy ✅ healthz ✅` (~30 s) |
 | Containers | data-svc + bar-grpc + bar-rest rebuildados, todos healthy |
-| Migration | `feeds` criada, 5 linhas de `assets.added_at` backfillladas |
-| Seed inicial de `feeds` | 16 linhas (5 símbolos × {15m, 30m, 1h, 4h}), todas em `status=active` (já tinham cache_meta) |
+| Migration | `feeds` criada, 5 linhas de `assets.added_at` com backfill aplicado |
+| Seed inicial de `feeds` | 16 linhas (BTC em 4 timeframes — 15m/30m/1h/4h — e os outros 4 símbolos em 3 — 15m/30m/1h), todas em `status=active` (já tinham `cache_meta`) |
 | `GET /v1/assets` | 200, retorna `status`, `addedAt`, `lastBarTs` |
 | `POST /v1/assets` sem token | 401 |
 | Erros nos logs (35 min) | nenhum |
@@ -247,6 +247,6 @@ Se algum desses for prioridade, abrir issue / spec antes da phase 4.
 
 - Spec original: [`docs/hybrid-data-svc-rest-api-spec.md`](hybrid-data-svc-rest-api-spec.md) §Phase 3
 - OpenAPI (source of truth): [`docs/openapi.yaml`](openapi.yaml)
-- Swagger UI: `http://localhost:8003/docs` (atrás do mesmo bearer das demais rotas)
+- Swagger UI: `http://localhost:8003/docs` — **público** (FastAPI aplica o bearer por router, e as rotas internas `/docs` e `/openapi.json` não estão atrás de middleware global). Se isso virar requisito, abrir issue pra adicionar gating dedicado.
 - Handover ops: [`docs/hybrid-data-svc-rest-api-handover.md`](hybrid-data-svc-rest-api-handover.md) §2.3 (workflow de onboarding atualizado)
 - PR: <https://github.com/Ruscigno/hybrid-data-svc/pull/12>
