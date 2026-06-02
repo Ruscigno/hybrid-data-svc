@@ -1,0 +1,45 @@
+# gitleaks config for hybrid-data-svc.
+# Extends the default ruleset and adds patterns for the providers we use.
+# This is a Python data service (Postgres + gRPC/REST gateway); the only
+# secret-bearing material in the tree is Postgres connection strings, so the
+# tailored rule set is just the generic Postgres connection-string pattern.
+
+title = "hybrid-data-svc gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "postgres-connection-string"
+description = "Postgres connection string with a real password"
+regex = '''postgres(ql)?://[^:]+:[^@]+@[^/]+'''
+keywords = ["postgres://", "postgresql://"]
+# Go's RE2 engine has no negative lookahead, so exclude the throwaway
+# `postgres:postgres@localhost` / `@127.0.0.1` ephemeral local/CI test
+# DBs via a per-rule allowlist regex. A genuine leak targets a real
+# host with a real password and still trips.
+[rules.allowlist]
+regexes = [
+  '''postgres(ql)?://postgres:postgres@(localhost|127\.0\.0\.1)''',
+]
+
+# Allowlist .env.example, docs, tests, and the app/source defaults — all of
+# which intentionally hold the `datasvc:datasvc@postgres` / env-interpolated
+# throwaway-local-DB connection string, never a real secret. These are PATH
+# allowlists (the value is a placeholder), not a relaxation of the rule: a
+# real connection string committed to a real config path still trips.
+[allowlist]
+description = "Test fixtures, example envs, source defaults, and the docs"
+paths = [
+  '''\.env\.example$''',
+  '''.*_test\.go$''',
+  '''.*\.test\.(ts|js)$''',
+  '''.*_test\.(ts|js)$''',
+  '''.*_test\.py$''',
+  '''tests/.*''',
+  '''data_svc/.*\.py$''',
+  '''scripts/.*\.py$''',
+  '''docker-compose\.ya?ml$''',
+  '''docs/.*''',
+  '''\.gitleaks\.toml$''',
+]
