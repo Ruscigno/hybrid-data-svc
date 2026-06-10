@@ -65,6 +65,16 @@ steps:
     image: bash
     commands:
       - shellcheck -x -S warning docker-entrypoint.sh
+      # Catch shell-injection / quoting bugs in the host-side watchdog scripts
+      # before they ship. The watchdog is bash-only and isolated under ops/.
+      - shellcheck -x -S warning ops/tv-watchdog/tv-watchdog.sh ops/tv-watchdog/install.sh ops/tv-watchdog/uninstall.sh
+
+  - name: bats-watchdog
+    image: bash
+    commands:
+      # bats-core is preinstalled in the base image; if it ever gets pulled
+      # out, fall back to `apk add --no-cache bats` here.
+      - bats ops/tv-watchdog/tests/tv-watchdog.bats
 
   - name: buf-lint
     image: bash

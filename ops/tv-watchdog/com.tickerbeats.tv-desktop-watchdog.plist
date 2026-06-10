@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for TradingView Desktop watchdog.
+
+  The @WATCHDOG_SH@ placeholder is replaced with the absolute path to
+  tv-watchdog.sh by ops/tv-watchdog/install.sh at install time, so this
+  file stays operator-agnostic in version control.
+
+  Trigger model:
+    * RunAtLoad=true   → fires once when launchd loads the plist
+                         (login or after `launchctl bootstrap`)
+    * StartInterval=300 → every 5 min thereafter
+
+  Logs:
+    * stdout/stderr captured to /tmp/tv-watchdog.launchd.{out,err}
+    * Unified Logging entries via `logger -t tv-watchdog` from the script
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tickerbeats.tv-desktop-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@WATCHDOG_SH@</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/tv-watchdog.launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/tv-watchdog.launchd.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
