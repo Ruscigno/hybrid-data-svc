@@ -45,6 +45,6 @@ cat <<EOF
 [install]   script: ${WATCHDOG_SH}
 [install] verify:
 [install]   launchctl list | grep ${LABEL}
-[install]   log show --predicate 'subsystem == "tv-watchdog"' --last 5m
 [install]   tail -f /tmp/tv-watchdog.log
+[install]   log show --predicate 'eventMessage CONTAINS "tv-watchdog"' --last 5m
 EOF
