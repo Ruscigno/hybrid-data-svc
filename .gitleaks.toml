@@ -14,22 +14,24 @@ id = "postgres-connection-string"
 description = "Postgres connection string with a real password"
 regex = '''postgres(ql)?://[^:]+:[^@]+@[^/]+'''
 keywords = ["postgres://", "postgresql://"]
+# IMPORTANT: every allowlist below is SCOPED TO THIS RULE — they only
+# silence the postgres-connection-string detection, NOT the default
+# ruleset. An AWS key, Stripe token, or other generic secret committed
+# under data_svc/*.py, docs/*, tests/* etc. still trips the default rules.
+[rules.allowlist]
+description = "Throwaway test/example/default postgres connection strings (per-rule)"
 # Go's RE2 engine has no negative lookahead, so exclude the throwaway
 # `postgres:postgres@localhost` / `@127.0.0.1` ephemeral local/CI test
-# DBs via a per-rule allowlist regex. A genuine leak targets a real
-# host with a real password and still trips.
-[rules.allowlist]
+# DBs via a regex allowlist. A genuine leak targets a real host with a
+# real password and still trips.
 regexes = [
   '''postgres(ql)?://postgres:postgres@(localhost|127\.0\.0\.1)''',
 ]
-
-# Allowlist .env.example, docs, tests, and the app/source defaults — all of
-# which intentionally hold the `datasvc:datasvc@postgres` / env-interpolated
-# throwaway-local-DB connection string, never a real secret. These are PATH
-# allowlists (the value is a placeholder), not a relaxation of the rule: a
-# real connection string committed to a real config path still trips.
-[allowlist]
-description = "Test fixtures, example envs, source defaults, and the docs"
+# Path allowlist for files that legitimately hold the
+# `datasvc:datasvc@postgres` / env-interpolated throwaway connection
+# string as a placeholder, source default, or docs example. Scoped here
+# (not in a top-level [allowlist]) so the default ruleset stays active
+# on these paths and catches non-postgres secrets.
 paths = [
   '''\.env\.example$''',
   '''.*_test\.go$''',

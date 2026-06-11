@@ -65,6 +65,18 @@ steps:
     image: bash
     commands:
       - shellcheck -x -S warning docker-entrypoint.sh
+      # Catch shell-injection / quoting bugs in the host-side watchdog scripts
+      # before they ship. The watchdog is bash-only and isolated under ops/.
+      - shellcheck -x -S warning ops/tv-watchdog/tv-watchdog.sh ops/tv-watchdog/install.sh ops/tv-watchdog/uninstall.sh
+
+  - name: bats-watchdog
+    image: bash
+    commands:
+      # Local Woodpecker backend on macOS executes shell commands directly
+      # (no Alpine image); bats-core is installed via brew on the runner
+      # host. If the runner ever loses it, reinstall with `brew install
+      # bats-core`.
+      - bats ops/tv-watchdog/tests/tv-watchdog.bats
 
   - name: buf-lint
     image: bash
