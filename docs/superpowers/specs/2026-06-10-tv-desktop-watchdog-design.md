@@ -50,9 +50,9 @@ Um watchdog **autônomo no host** que detecta TV Desktop num estado inválido pr
 | PROBE — escopo | Varre todo o `TV_CDP_PORT_RANGE` (default `9222-9230`) | data-svc também varre o range. Se TV está saudável em 9223+ (porque outra Chromium pegou 9222), watchdog precisa aceitar — caso contrário, mataria TV a cada ciclo. |
 | Validação adicional | qualquer aba em `/json/list` com URL contendo `tradingview` (regex genérica, case-insensitive) | Replica fielmente `_is_tv_endpoint` em `cdp_discover.py:142`. Aba `tradingview.com/chart` é o caso forte mas não é exigência — qualquer aba `tradingview` no URL serve. |
 | Scheduler | LaunchAgent (`com.tickerbeats.tv-desktop-watchdog.plist`) | `RunAtLoad=true` fixa o estado atual no install. `StartInterval=300` (5min) limita blast radius de qualquer regressão futura. Cron é deprecated no macOS e não sobrevive sleep/wake. |
-| Linguagem | Bash | Validação cabe em ~30 linhas; zero deps além do que macOS já tem (`curl`, `osascript`, `kill`, `ps`, `open`, `mkdir`, `logger`, `stat`). Trade-off: reimplementa em shell o que `cdp_discover.py` faz em Python; aceitável porque a heurística é estável. |
+| Linguagem | Bash | Validação cabe em ~30 linhas; zero deps além do que macOS já tem (`curl`, `osascript`, `kill`, `ps`, `open`, `mkdir`, `stat`). Trade-off: reimplementa em shell o que `cdp_discover.py` faz em Python; aceitável porque a heurística é estável. |
 | Localização no repo | `hybrid-data-svc/ops/tv-watchdog/` | Mesmo repo do data-svc afetado. Operadores que clonam pra rodar o stack já recebem o watchdog. |
-| Quit strategy | `osascript ... quit` (graceful, com stderr capturado) → 10s timeout → `env kill -TERM <main_pid>` → 5s → `env kill -KILL` (fallback) | Limpo no caso comum; força quando trava. PID exato (não pkill regex) evita matar Electron Helpers. `env kill` força lookup externo ignorando o builtin do Bash (necessário pra mockabilidade nos testes). |
+| Quit strategy | `osascript ... quit` (graceful, com stderr capturado) → 10s timeout → `env kill -TERM <main_pid>` → 5s → `env kill -KILL` (fallback) | Limpo no caso comum; força quando trava. PID exato (não `pkill -f` regex) evita matar Electron Helpers. `env kill` força lookup externo ignorando o builtin do Bash (necessário pra mockabilidade nos testes). |
 | Stale lock | Recovery por PID liveness + idade (>180s) | `trap EXIT` não dispara em SIGKILL / kernel panic. Lock dir órfão poderia desabilitar o watchdog permanentemente. Acquire grava `$$` em `owner.pid` dentro do dir; próxima tentativa checa se PID vive e se idade ≤ `_LOCK_MAX_AGE_S` (default 180s = 3min, comfortably > worst-case 80s run) antes de reclamar. |
 | Aba TradingView ausente (CDP up) | Logar WARN apenas, sem intervir | Watchdog não atropela workflow do operador. |
 | Notificações | Nenhuma nesta versão | YAGNI; pode entrar depois se virar requisito. |
@@ -68,10 +68,10 @@ hybrid-data-svc/
     ├── uninstall.sh                                # simétrico ao install
     ├── README.md                                   # instalar / desinstalar / troubleshoot
     └── tests/
-        └── tv-watchdog.bats                        # 6 casos cobrindo a state machine
+        └── tv-watchdog.bats                        # 18 casos cobrindo state machine, lock recovery, install/uninstall
 ```
 
-Não há outros arquivos dentro do repo do `data_svc/` Python — o watchdog é totalmente externo ao processo do data-svc. Ele roda no host (não no container) e só interage com TradingView.app via CDP HTTP e AppleScript/pkill.
+Não há outros arquivos dentro do repo do `data_svc/` Python — o watchdog é totalmente externo ao processo do data-svc. Ele roda no host (não no container) e só interage com TradingView.app via CDP HTTP e AppleScript/`env kill`.
 
 ## State machine do `tv-watchdog.sh`
 
@@ -79,57 +79,82 @@ Uma execução = um shot, retornando exit code significativo pro launchd.
 
 ```
                 ┌──────────────────────────────┐
-                │  start (lock /tmp/...lock)   │
+                │  start                       │
+                │  (mkdir LOCK_DIR; trap EXIT) │
                 └──────────────┬───────────────┘
-                               ▼
-                ┌──────────────────────────────┐
-                │  PROBE: GET /json/version    │
-                │  (curl --max-time 2)         │
-                └──────┬─────────────┬─────────┘
-                       │             │
-                  200 OK             non-200 / timeout
-                       │             │
-                       ▼             ▼
-        ┌──────────────────────┐   ┌──────────────────────────┐
-        │ VALIDATE:            │   │ ACT: TV needs (re)launch │
-        │ GET /json/list       │   └──────────┬───────────────┘
-        │ has tradingview      │              │
-        │ chart tab?           │              ▼
-        └──┬───────────────┬───┘   ┌──────────────────────────┐
-           │               │       │  is TV process running?  │
-         yes             no        └──────┬───────────────┬───┘
-           │               │              │               │
-           ▼               ▼            yes              no
-        OK exit 0    WARN "no chart      │               │
-                     tab — manual"       ▼               │
-                     exit 0       ┌─────────────────┐    │
-                                  │ osascript quit  │    │
-                                  │ wait <=10s      │    │
-                                  └────┬────────────┘    │
-                                       │                 │
-                                  process dead? ──no──▶ pkill -f
-                                       │                 │
-                                      yes ◀──────────────┘
-                                       │
-                                       ▼
-                              ┌────────────────────────────┐
-                              │ open -a TradingView        │
-                              │   --args                   │
-                              │   --remote-debugging-port  │
-                              │   =9222                    │
-                              └────────────┬───────────────┘
-                                           ▼
-                              ┌────────────────────────────┐
-                              │ poll /json/version every 2s│
-                              │ up to 60s                  │
-                              └──────┬─────────────┬───────┘
-                                     │             │
-                                  reachable     timeout
-                                     │             │
-                                     ▼             ▼
-                              "recovered"    ERROR exit 1
-                              exit 0         (launchd re-tenta
-                                              em 5min)
+                       │ lock taken?
+              no ◀─────┴─────▶ yes
+              │                │
+              ▼                ▼
+        ┌─────────┐    ┌──────────────────────┐
+        │ acquire │    │ stale recovery:      │
+        │ (write  │    │ owner.pid dead OR    │
+        │  $$ to  │    │ age > 180s OR        │
+        │  owner) │    │ no pid + age ≥ 2s    │
+        └────┬────┘    └────┬─────────────────┘
+             │              │ yes  │ no
+             │              ▼      ▼
+             │           reclaim   exit 0
+             │           proceed   "another running"
+             ◀───────────┘
+             ▼
+   ┌──────────────────────────────────────┐
+   │  PROBE: foreach p in PORT_RANGE:     │
+   │   curl /json/version + /json/list    │
+   │   first port w/ CDP up + tradingview │
+   │   tab → healthy_port=p               │
+   └──────┬─────────────────┬──────┬──────┘
+          │ found           │ none CDP up + zero TV tabs
+          │                 │ found, but some
+          ▼                 ▼ port had no TV tab
+   VALIDATE ok           WARN "no tab"  ACT: (re)launch
+   exit 0                exit 0         │
+                                        ▼
+                              ┌─────────────────────┐
+                              │  is TV running?     │
+                              └──┬───────────┬──────┘
+                            yes  │           │  no
+                                 ▼           ▼
+                       ┌──────────────────┐  │
+                       │ osascript quit   │  │
+                       │ wait ≤ QUIT (10s)│  │
+                       │ stderr → WARN log│  │
+                       └────┬──────────┬──┘  │
+                       dead │      not dead, │
+                            │      or exit≠0 │
+                            │            │   │
+                            │            ▼   │
+                            │   ┌────────────────┐
+                            │   │ env kill -TERM │
+                            │   │ wait ≤ KILL(5s)│
+                            │   └────┬───────┬───┘
+                            │  dead  │       │ not dead
+                            │        │       ▼
+                            │        │   ┌────────────────┐
+                            │        │   │ env kill -KILL │
+                            │        │   │ wait ≤ KILL(5s)│
+                            │        │   └─┬───────┬──────┘
+                            │        │     │ dead  │ still alive
+                            │        ▼     ▼       ▼
+                            ▼     ─────────       ERROR exit 1
+                       ┌──────────────────────┐
+                       │ open -a TradingView  │
+                       │   --args             │
+                       │   --remote-debugging │
+                       │   -port=9222         │
+                       └──────┬──────┬────────┘
+                          ok  │      │ open failed
+                              ▼      ▼
+                  ┌─────────────────┐  ERROR exit 1
+                  │ VERIFY:         │
+                  │ poll /json/     │
+                  │ version every 2s│
+                  │ up to 60s       │
+                  └──┬─────────┬────┘
+              200 OK │         │ timeout
+                     ▼         ▼
+              "recovered" ERROR exit 1
+              exit 0      (launchd retries)
 ```
 
 **Exit codes:**
@@ -153,7 +178,8 @@ Uma execução = um shot, retornando exit code significativo pro launchd.
 | `LOCK_DIR` | `/tmp/tv-watchdog.lock.d` | Dir usado como mutex atomic. Inclui `owner.pid` |
 | `LOG_FILE` | `/tmp/tv-watchdog.log` | Append-only file log com timestamp + `[run=...]` |
 | `_LOCK_MAX_AGE_S` | `180` | Idade após a qual um lock dir vivo é considerado stale e reclamado defensivamente. `_` prefix indica "interno; mude só se souber o que está fazendo" |
-| `DRY_RUN` | unset | Quando `=1`, imprime ações mas não executa `osascript`/`kill`/`open` |
+| `_LOCK_PID_GRACE_S` | `2` | Janela onde um lock dir vazio (sem `owner.pid`) é tratado como "acquirer ainda escrevendo" em vez de orfão. Fecha o race entre `mkdir` e gravação do PID file |
+| `DRY_RUN` | `0` | Quando `=1`, imprime ações mas não executa `osascript`/`kill`/`open` |
 
 ## Componentes
 
@@ -211,48 +237,17 @@ O placeholder `@WATCHDOG_SH@` é substituído pelo caminho absoluto no install. 
 
 ### `install.sh`
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$SCRIPT_DIR/com.tickerbeats.tv-desktop-watchdog.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/com.tickerbeats.tv-desktop-watchdog.plist"
-LABEL="com.tickerbeats.tv-desktop-watchdog"
-UID_NUM="$(id -u)"
-
-mkdir -p "$HOME/Library/LaunchAgents"
-sed "s|@WATCHDOG_SH@|$SCRIPT_DIR/tv-watchdog.sh|g" "$PLIST_SRC" > "$PLIST_DST"
-chmod +x "$SCRIPT_DIR/tv-watchdog.sh"
-
-launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_NUM" "$PLIST_DST"
-launchctl kickstart "gui/$UID_NUM/$LABEL"
-
-echo "[install] watchdog instalado e disparado uma vez."
-echo "[install] logs: log show --predicate 'subsystem == \"tv-watchdog\"' --last 5m"
-```
-
-Idempotente: `bootout || true` antes do `bootstrap`. Pode rodar quantas vezes quiser.
+Bootstrap idempotente: renderiza o `@WATCHDOG_SH@` placeholder com o caminho absoluto do `tv-watchdog.sh` no checkout, copia o plist pra `~/Library/LaunchAgents/`, faz `launchctl bootout || true` antes do `bootstrap`, e `kickstart` pra disparar imediatamente. Variáveis-chave: `PLIST_DST=$HOME/Library/LaunchAgents/com.tickerbeats.tv-desktop-watchdog.plist`, `LABEL=com.tickerbeats.tv-desktop-watchdog`, `UID_NUM=$(id -u)`. Operações em `$HOME` (escopo de usuário, sem `sudo`). Não chama `chmod +x` — o script já está commitado com mode 755. A mensagem final aponta o operador pra `launchctl list | grep $LABEL` e `tail -f /tmp/tv-watchdog.log`.
 
 ### `uninstall.sh`
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-LABEL="com.tickerbeats.tv-desktop-watchdog"
-PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
-UID_NUM="$(id -u)"
-
-launchctl bootout "gui/$UID_NUM/$LABEL" 2>/dev/null || true
-rm -f "$PLIST_DST"
-echo "[uninstall] watchdog removido."
-```
+Simétrico ao install: `launchctl bootout || true` + `rm -f $PLIST_DST`. Logs em `/tmp/tv-watchdog.{log,launchd.out,launchd.err}` são deixados intactos pra inspeção pós-uninstall.
 
 ### `tests/tv-watchdog.bats`
 
-Requer `bats-core` (`brew install bats-core`) pra rodar. Cada teste injeta mocks via `PATH` (script + diretório temporário com binários falsos `curl`/`ps`/`osascript`/`open`/`kill`/`logger`/`launchctl`), de forma a evitar tocar TV.app real.
+Requer `bats-core` (`brew install bats-core`) pra rodar. Cada teste injeta mocks via `PATH` (script + diretório temporário com binários falsos `curl`/`ps`/`osascript`/`open`/`kill`/`launchctl`), evitando tocar TV.app real. Os casos `install_idempotent` e `uninstall_keeps_logs` redirecionam `$HOME` pra um sandbox `mktemp` antes de invocar os scripts, garantindo que rodar a suíte localmente NUNCA sobrescreve ou apaga o plist real do operador.
 
-17 casos cobrindo a state machine + lock + install/uninstall:
+18 casos cobrindo a state machine + lock + install/uninstall:
 
 | Caso | O que cobre | Exit |
 |---|---|---|
@@ -269,10 +264,11 @@ Requer `bats-core` (`brew install bats-core`) pra rodar. Cada teste injeta mocks
 | `relaunch_verify_timeout` | open OK mas CDP nunca volta no janelão → exit 1 | 1 |
 | `lock_busy_with_live_owner` | PID dentro do lock está vivo → exit 0, no-op | 0 |
 | `lock_stale_dead_owner_reclaimed` | PID 99999 (morto) → reclaim + prossegue | 0 |
-| `lock_stale_no_pid_file_reclaimed` | lock dir vazio → reclaim + prossegue | 0 |
+| `lock_stale_no_pid_file_reclaimed` | lock dir vazio + `_LOCK_PID_GRACE_S=0` → reclaim + prossegue | 0 |
+| `lock_acquirer_race_grace_respected` | lock dir vazio dentro do grace (`_LOCK_PID_GRACE_S=2`) → trata como acquirer vivo, exit 0 sem reclaim | 0 |
 | `dry_run` | DRY_RUN=1 → loga "would do X" sem efeito real | 1 (verify continua falhando, mas sem side effects) |
-| `install_idempotent` | install.sh rodado 2× → 2 bootouts + 2 bootstraps no log do mock launchctl | 0 |
-| `uninstall_keeps_logs` | uninstall.sh deixa `/tmp/tv-watchdog.log` intocado | 0 |
+| `install_idempotent` | install.sh em `$HOME` sandboxed, rodado 2× → 2 bootouts + 2 bootstraps no log do mock launchctl | 0 |
+| `uninstall_keeps_logs` | uninstall.sh em `$HOME` sandboxed deixa `/tmp/tv-watchdog.log` intocado | 0 |
 
 Os testes injetam timeouts curtos via env (`TV_VERIFY_TIMEOUT_S=4 TV_QUIT_TIMEOUT_S=2 TV_KILL_TIMEOUT_S=2`) + range encurtado (`TV_CDP_PORT_RANGE=9222-9224`) pra rodar em ~10s total.
 
@@ -295,17 +291,16 @@ Mínimo necessário pro operador:
 
 Watchdog tem janela de execução de até ~80s (10s quit + 5s kill + 60s verify). O threshold de stale (180s) é mais que 2× o worst-case pra evitar reclaim acidental de um run lento.
 
-**Logging.** Três destinos por linha:
+**Logging.** Dois destinos por linha (não três):
 
 | Destino | Quando inspecionar | Quem rotaciona |
 |---|---|---|
-| `logger -t tv-watchdog "..."` (syslog / Unified Logging) | `log show --predicate 'eventMessage CONTAINS "tv-watchdog"' --last 1h`, ou Console.app filtrando por process `logger` | macOS |
-| `/tmp/tv-watchdog.log` (append, ISO 8601) | `tail -f /tmp/tv-watchdog.log` | Manual; volume ≈ 50 linhas/dia |
-| `/tmp/tv-watchdog.launchd.{out,err}` | stdout/stderr do script + tracebacks | Não rotaciona |
+| `/tmp/tv-watchdog.log` (append, ISO 8601) | `tail -f /tmp/tv-watchdog.log` — fonte canônica | Manual; volume ≈ 50 linhas/dia |
+| `/tmp/tv-watchdog.launchd.{out,err}` | stdout/stderr capturados pelo launchd; mesmo conteúdo do arquivo, mas separado por nível | Não rotaciona |
 
-Cada linha carrega o `run_id` em **todos os 3 destinos** (file, stdout/stderr, syslog/Unified Logging via `logger -t tv-watchdog "[run=...] ..."`) pra correlacionar uma execução inteira: `2026-06-10T18:00:01 [run=a1b2c3d4] PROBE range=9222-9230`.
+Cada linha carrega o `run_id` em ambos os destinos pra correlacionar uma execução inteira: `2026-06-10T18:00:01 [run=a1b2c3d4] PROBE range=9222-9230`.
 
-`logger` no macOS não suporta `--subsystem`, então o predicate canônico do Unified Logging não é `subsystem == "tv-watchdog"`. Usa `eventMessage CONTAINS "tv-watchdog"` ou, mais simples, `tail -f /tmp/tv-watchdog.log` direto.
+**Por que não Unified Logging.** A versão inicial chamava `logger -t tv-watchdog "..."` esperando bridge pro Unified Logging do macOS. Verificação empírica em macOS Tahoe (e provavelmente outras builds recentes): o ASL bridge está desligado por default, então nem `log show --predicate 'eventMessage CONTAINS "tv-watchdog"'` nem `process == "logger"` retornam linhas do watchdog. A chamada foi removida pra evitar custo de syscall sem benefício. O file log é a única fonte de verdade.
 
 **Permissões macOS.** A primeira invocação de `osascript -e 'tell application "TradingView" to quit'` dispara prompt de Automation em System Settings → Privacy & Security → Automation. Se o operador negar (ou o prompt não chegar a aparecer em sessões launchd), o `osascript` retorna não-zero e o stderr "Not authorized to send Apple events to TradingView." é capturado direto no log WARN — actionable, sem adivinhação. O watchdog cai automaticamente pro `env kill -TERM`, então a função não fica bloqueada pela falta de permissão — só fica menos limpa.
 
@@ -315,8 +310,8 @@ README documenta a primeira execução manual (rodar `./tv-watchdog.sh` no termi
 
 - TV já estava OK: `PROBE` 200 + `VALIDATE` OK → exit 0. Nenhuma ação. Nenhum log warn.
 - Watchdog re-instalado mid-flight: `install.sh` faz `bootout || true` antes de `bootstrap`. Sem dois agentes.
-- Disco cheio em `/tmp`: `logger` (syslog) continua, append em arquivo falha silenciosa. Não trava o ACT.
-- TV.app em update via auto-updater: PROBE refused → tenta `osascript quit` → o processo do updater ignora → `pkill` mata o TV pai → `open` relança a versão atualizada. Comportamento aceitável.
+- Disco cheio em `/tmp`: append em arquivo falha silenciosa (`>> "${LOG_FILE}" 2>/dev/null || true`); stdout/stderr permanecem visíveis pelo launchd. Não trava o ACT.
+- TV.app em update via auto-updater: PROBE refused → tenta `osascript quit` → se o processo do updater ignora, `env kill -TERM` mata o TV pai → `open` relança a versão atualizada. Comportamento aceitável.
 
 ## Out of scope
 
@@ -327,6 +322,10 @@ README documenta a primeira execução manual (rodar `./tv-watchdog.sh` no termi
 - Auto-update do próprio watchdog. O operador puxa via `git pull`; launchd vê a nova versão do script na próxima execução (path é estático, conteúdo do script muda).
 - Suporte multi-host. O watchdog é por máquina; cada host com TV.app instala o seu.
 
+## Side-fixes incluídos no mesmo PR
+
+- `.gitleaks.toml`: refatoração de escopo do allowlist. A versão anterior tinha um `[allowlist]` top-level cujos `paths` mascaravam **todo** o ruleset default (AWS keys, Stripe tokens, etc.) em `data_svc/`, `tests/`, `docs/` etc. — não só a regra `postgres-connection-string` como o comentário sugeria. Os paths foram movidos pra `[rules.allowlist]` da regra postgres, restaurando o default ruleset no source tree. Tecnicamente é um fix de segurança independente do watchdog; bundlado aqui porque a auditoria que apareceu junto na revisão era do mesmo PR e o split não trazia ganho prático.
+
 ## Pontos abertos
 
-Nenhum. Todas as decisões de design foram fechadas no brainstorm.
+Nenhum. Todas as decisões de design foram fechadas durante o brainstorm + rodadas de revisão.

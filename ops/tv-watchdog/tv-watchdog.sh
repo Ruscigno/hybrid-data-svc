@@ -52,14 +52,15 @@ log() {
     local ts
     ts="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
     local line="${ts} [run=${RUN_ID}] ${level} ${msg}"
-    # 1) syslog/Console.app — `logger -t` sets the tag (process name shown
-    #    in Console.app); macOS's `logger` doesn't support --subsystem so
-    #    queries should use `eventMessage CONTAINS "tv-watchdog"` or just
-    #    tail the file log below.
-    logger -t tv-watchdog "[run=${RUN_ID}] ${level} ${msg}" 2>/dev/null || true
-    # 2) Append to /tmp file (rotate by hand; spec acknowledges this)
+    # Two destinations only — verified empirically:
+    #   1) /tmp/tv-watchdog.log (file, append, ISO 8601). Canonical.
+    #   2) stdout/stderr → launchd captures these into
+    #      /tmp/tv-watchdog.launchd.{out,err}. Secondary.
+    # macOS `logger` does NOT reliably bridge to Unified Logging or syslog
+    # on recent builds (ASL bridge is off by default), so a syslog
+    # destination would be invisible noise. The file log is the only
+    # query-friendly path; LOG_FILE has a sane default and is env-overridable.
     printf '%s\n' "${line}" >> "${LOG_FILE}" 2>/dev/null || true
-    # 3) stdout/stderr captured by launchd into .out/.err files
     if [[ "${level}" == "ERROR" || "${level}" == "WARN" ]]; then
         printf '%s\n' "${line}" >&2
     else
@@ -99,13 +100,34 @@ _lock_owner_alive() {
     kill -0 "${pid}" 2>/dev/null
 }
 
+# Threshold below which a "missing owner.pid" doesn't trigger reclaim —
+# closes the acquire_lock race (mkdir succeeds, then pid file is written).
+# A legitimate writer has milliseconds; anything past this is genuinely
+# orphan.
+: "${_LOCK_PID_GRACE_S:=2}"
+
 _reclaim_lock_if_stale() {
     # Returns 0 (and removes the lock) when the existing lock is provably
-    # orphaned; 1 (lock left alone) when a live owner is still inside.
-    local age
+    # orphaned; 1 (lock left alone) when a live owner is still inside or
+    # might still be acquiring.
+    local age has_pid_file
     age="$(_lock_age_s)"
+    [[ -f "$(_lock_pid_file)" ]] && has_pid_file=1 || has_pid_file=0
+
+    if (( has_pid_file == 0 )); then
+        # owner.pid absent. Could be (a) legitimate acquirer between mkdir
+        # and the pid write, or (b) a crashed process that mkdir'd and died
+        # before writing. Distinguish by age — a real acquirer is at most
+        # a few ms away from writing the pid.
+        if (( age < _LOCK_PID_GRACE_S )); then
+            return 1
+        fi
+        log WARN "lock at ${LOCK_DIR} has no owner.pid after ${age}s; reclaiming"
+        rm -rf "${LOCK_DIR}" 2>/dev/null
+        return 0
+    fi
     if ! _lock_owner_alive; then
-        log WARN "lock at ${LOCK_DIR} has dead/missing owner (age=${age}s); reclaiming"
+        log WARN "lock at ${LOCK_DIR} has dead owner (age=${age}s); reclaiming"
         rm -rf "${LOCK_DIR}" 2>/dev/null
         return 0
     fi

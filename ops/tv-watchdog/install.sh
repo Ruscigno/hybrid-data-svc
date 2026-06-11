@@ -46,5 +46,4 @@ cat <<EOF
 [install] verify:
 [install]   launchctl list | grep ${LABEL}
 [install]   tail -f /tmp/tv-watchdog.log
-[install]   log show --predicate 'eventMessage CONTAINS "tv-watchdog"' --last 5m
 EOF

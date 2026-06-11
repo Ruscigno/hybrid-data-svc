@@ -77,15 +77,14 @@ flow clean.
 ```bash
 launchctl list | grep tv-desktop-watchdog
 tail -f /tmp/tv-watchdog.log
-# Or, via Unified Logging — note `eventMessage CONTAINS` (macOS `logger`
-# doesn't expose --subsystem, so subsystem-predicate queries return empty):
-log show --predicate 'eventMessage CONTAINS "tv-watchdog"' --last 10m
 ```
 
 The agent should be listed with a recent PID (or `-` if idle). Logs
-appear with `[run=<8-hex>]` markers in **all three** destinations
-(stdout, file, Unified Logging) so a single execution can be traced
-end-to-end.
+appear with `[run=<8-hex>]` markers in two destinations: the file at
+`/tmp/tv-watchdog.log` (canonical) and the launchd-captured stdout/stderr
+at `/tmp/tv-watchdog.launchd.{out,err}`. macOS `logger` doesn't reliably
+bridge to Unified Logging on recent builds, so there's no `log show`
+query path — the file is the source of truth.
 
 ## Configuration (env)
 
@@ -104,6 +103,7 @@ All tunables have production-sane defaults; override in the plist's
 | `LOCK_DIR` | `/tmp/tv-watchdog.lock.d` | Lock dir (atomic mkdir). Stores `owner.pid`. |
 | `LOG_FILE` | `/tmp/tv-watchdog.log` | Append-only file log (ISO 8601 + `[run=...]`). |
 | `_LOCK_MAX_AGE_S` | `180` | Stale-lock reclaim threshold. `_` prefix = internal; touch only if you know why. |
+| `_LOCK_PID_GRACE_S` | `2` | Grace window where an empty lock dir (no `owner.pid`) is treated as "acquirer still writing" instead of orphan. Closes the mkdir-then-write race. |
 | `DRY_RUN` | `0` | When `1`, the script logs intended actions but executes nothing destructive. |
 
 ## Smoke test
@@ -112,7 +112,7 @@ With a healthy stack:
 
 ```bash
 ./tv-watchdog.sh ; echo "exit=$?"
-# Expected: exit=0; logs contain "VALIDATE ok (chart tab present); healthy"
+# Expected: exit=0; logs contain "VALIDATE ok (port=9222, tradingview tab present); healthy"
 ```
 
 Dry-run with TV intentionally misconfigured (or stopped):

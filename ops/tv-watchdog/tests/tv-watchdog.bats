@@ -442,13 +442,31 @@ EOF
     [[ "${output}" == *"VALIDATE ok"* ]]
 }
 
-@test "lock_stale_no_pid_file_reclaimed: empty lock dir → reclaim and proceed" {
+@test "lock_stale_no_pid_file_reclaimed: empty lock dir past grace → reclaim and proceed" {
     mkdir -p "${LOCK_DIR}"  # no owner.pid inside
+    # Force grace=0 so an empty dir is reclaimed immediately, instead of
+    # waiting 2s. With the default grace, a dir without owner.pid is
+    # treated as "acquirer in progress" and the script backs off —
+    # see _LOCK_PID_GRACE_S in tv-watchdog.sh and the
+    # lock_acquirer_race_grace_respected test below.
     mock_curl_healthy
+    export _LOCK_PID_GRACE_S=0
     run "${WATCHDOG}"
     [[ "${status}" -eq 0 ]]
     [[ "${output}" == *"reclaiming"* ]]
     [[ "${output}" == *"VALIDATE ok"* ]]
+}
+
+@test "lock_acquirer_race_grace_respected: empty lock dir within grace → back off" {
+    # Simulates the acquire_lock race: process A did mkdir; process B
+    # arrives before A writes owner.pid. New logic must treat this as
+    # "live acquirer" and NOT reclaim, so A's lock is preserved.
+    mkdir -p "${LOCK_DIR}"  # no owner.pid inside, freshly created
+    mock_curl_healthy
+    run "${WATCHDOG}"  # uses default _LOCK_PID_GRACE_S=2
+    [[ "${status}" -eq 0 ]]
+    [[ "${output}" == *"another instance is running"* ]]
+    [[ "${output}" != *"reclaiming"* ]]
 }
 
 @test "dry_run: logs intended actions without touching processes" {
@@ -463,6 +481,7 @@ EOF
 
 @test "install_idempotent: install.sh runs twice → exits 0 both times" {
     skip_if_no_launchctl
+    sandbox_home
     mock_launchctl_recording
     bash "${REPO_ROOT}/ops/tv-watchdog/install.sh" >/dev/null
     bash "${REPO_ROOT}/ops/tv-watchdog/install.sh" >/dev/null
@@ -472,18 +491,40 @@ EOF
     bootstraps="$(grep -c '^bootstrap' "${MOCKBIN}/.launchctl-log" || true)"
     [[ "${bootouts}" -eq 2 ]]
     [[ "${bootstraps}" -eq 2 ]]
+    # Plist landed in the sandboxed HOME, not the operator's real HOME.
+    [[ -f "${HOME}/Library/LaunchAgents/com.tickerbeats.tv-desktop-watchdog.plist" ]]
 }
 
 @test "uninstall_keeps_logs: uninstall.sh leaves /tmp logs alone" {
     skip_if_no_launchctl
+    sandbox_home
     mock_launchctl_recording
     : > "${LOG_FILE}"  # ensure the file exists
+    # Pre-seed a fake plist in the sandboxed HOME so uninstall has something
+    # to remove (otherwise the assert below is vacuous).
+    mkdir -p "${HOME}/Library/LaunchAgents"
+    : > "${HOME}/Library/LaunchAgents/com.tickerbeats.tv-desktop-watchdog.plist"
     bash "${REPO_ROOT}/ops/tv-watchdog/uninstall.sh" >/dev/null
     [[ -f "${LOG_FILE}" ]]
     grep -q '^bootout' "${MOCKBIN}/.launchctl-log"
+    # Real-HOME safety check: uninstall only touched the sandbox.
+    [[ ! -f "${HOME}/Library/LaunchAgents/com.tickerbeats.tv-desktop-watchdog.plist" ]]
 }
 
 # Helpers used only by install/uninstall tests --------------------------------
+
+# Redirect HOME to a per-test sandbox so install.sh / uninstall.sh never
+# touch ~/Library/LaunchAgents on the operator's real machine. Critical:
+# without this, running the suite locally on a host that already has the
+# watchdog installed would overwrite + then delete the real plist while
+# the operator's launchd still has it loaded.
+sandbox_home() {
+    export HOME="$(mktemp -d "${BATS_TMPDIR}/fakehome.XXXXXX")"
+    # teardown() in this file rm's MOCKBIN/LOCK_DIR/LOG_FILE only — we
+    # need to clean HOME too. Use a per-test trap chained to bats's own.
+    trap 'rm -rf "${HOME}"' EXIT
+}
+
 skip_if_no_launchctl() {
     if ! command -v launchctl >/dev/null 2>&1; then
         skip "launchctl not available"
