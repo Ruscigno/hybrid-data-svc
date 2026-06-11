@@ -279,7 +279,7 @@ Mínimo necessário pro operador:
 1. Pré-requisitos: macOS, TradingView.app em `/Applications/`, repo clonado em **path estável** (o path absoluto é gravado no plist no install; mover o repo depois exige reinstall).
 2. `./install.sh` — instala e dispara já.
 3. Aviso sobre **permissão de Automation** no primeiro disparo (System Settings → Privacy & Security → Automation → Terminal → TradingView). Sem isso, o graceful quit cai pro SIGTERM (também funciona, só fica menos limpo).
-4. Verificação: `launchctl list | grep tv-desktop-watchdog`, `tail -f /tmp/tv-watchdog.log` (ou `log show --predicate 'eventMessage CONTAINS "tv-watchdog"' --last 10m`).
+4. Verificação: `launchctl list | grep tv-desktop-watchdog`, `tail -f /tmp/tv-watchdog.log` (ver "Por que não Unified Logging" abaixo — `log show` não retorna linhas do watchdog).
 5. `./uninstall.sh` pra remover.
 6. Variáveis de override (TV_CDP_PORT_RANGE, TIMEOUT_S, etc.) listadas com defaults.
 7. Smoke test manual.
@@ -298,7 +298,7 @@ Watchdog tem janela de execução de até ~80s (10s quit + 5s kill + 60s verify)
 | `/tmp/tv-watchdog.log` (append, ISO 8601) | `tail -f /tmp/tv-watchdog.log` — fonte canônica | Manual; volume ≈ 50 linhas/dia |
 | `/tmp/tv-watchdog.launchd.{out,err}` | stdout/stderr capturados pelo launchd; mesmo conteúdo do arquivo, mas separado por nível | Não rotaciona |
 
-Cada linha carrega o `run_id` em ambos os destinos pra correlacionar uma execução inteira: `2026-06-10T18:00:01 [run=a1b2c3d4] PROBE range=9222-9230`.
+Cada linha carrega o `run_id` em ambos os destinos pra correlacionar uma execução inteira: `2026-06-10T18:00:01Z [run=a1b2c3d4] INFO PROBE range=9222-9230`.
 
 **Por que não Unified Logging.** A versão inicial chamava `logger -t tv-watchdog "..."` esperando bridge pro Unified Logging do macOS. Verificação empírica em macOS Tahoe (e provavelmente outras builds recentes): o ASL bridge está desligado por default, então nem `log show --predicate 'eventMessage CONTAINS "tv-watchdog"'` nem `process == "logger"` retornam linhas do watchdog. A chamada foi removida pra evitar custo de syscall sem benefício. O file log é a única fonte de verdade.
 

@@ -34,7 +34,7 @@ Every 5 minutes (and once at login):
 | `com.tickerbeats.tv-desktop-watchdog.plist` | LaunchAgent template with `@WATCHDOG_SH@` placeholder. |
 | `install.sh` | Renders the placeholder, copies to `~/Library/LaunchAgents/`, `bootstrap`s. Idempotent. |
 | `uninstall.sh` | Symmetric. Leaves `/tmp/tv-watchdog.*` logs alone for review. |
-| `tests/tv-watchdog.bats` | 17 bats cases covering the state machine, lock recovery, install/uninstall. |
+| `tests/tv-watchdog.bats` | 18 bats cases covering the state machine, lock recovery (including the acquirer-race grace window), and install/uninstall. |
 
 ## Install
 
@@ -128,10 +128,10 @@ DRY_RUN=1 ./tv-watchdog.sh ; echo "exit=$?"
 ```bash
 brew install bats-core   # one-off
 bats ops/tv-watchdog/tests/tv-watchdog.bats
-# Expected: 17 tests, all passing, ~10s.
+# Expected: 18 tests, all passing, ~10s.
 ```
 
-The bats suite injects mock `curl`/`ps`/`osascript`/`open`/`kill`/`logger`/`launchctl`
+The bats suite injects mock `curl`/`ps`/`osascript`/`open`/`kill`/`launchctl`
 binaries via `PATH` so it never touches the real TradingView.app, the network,
 or the system LaunchAgent registry.
 

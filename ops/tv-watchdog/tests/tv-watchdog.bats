@@ -1,9 +1,10 @@
 #!/usr/bin/env bats
 # Tests for ops/tv-watchdog/tv-watchdog.sh
 #
-# Each test injects mock binaries (curl, ps, osascript, open, kill, logger)
-# on $PATH so the real TradingView.app and the network are never touched.
-# Timeouts are shrunk via env vars so the whole suite runs in <30s.
+# Each test injects mock binaries (curl, ps, osascript, open, kill,
+# launchctl) on $PATH so the real TradingView.app, the network, and the
+# system LaunchAgent registry are never touched. Timeouts are shrunk via
+# env vars so the whole suite runs in <30s.
 #
 # Run with: bats ops/tv-watchdog/tests/tv-watchdog.bats
 
@@ -13,6 +14,9 @@ setup() {
     MOCKBIN="$(mktemp -d "${BATS_TMPDIR}/mockbin.XXXXXX")"
     LOCK_DIR="$(mktemp -d -u "${BATS_TMPDIR}/wdlock.XXXXXX")"
     LOG_FILE="$(mktemp -u "${BATS_TMPDIR}/wdlog.XXXXXX.log")"
+    # SANDBOX_HOME is set by sandbox_home() in install/uninstall tests;
+    # teardown() rm's it. Initialised empty so the `-n` check is safe.
+    SANDBOX_HOME=""
 
     # Tiny timeouts so tests finish fast even when probing a 9-port range
     # in a loop.
@@ -24,17 +28,15 @@ setup() {
     export LOCK_DIR
     export LOG_FILE
 
-    # logger mocked to no-op so test runs don't pollute the system log.
-    cat > "${MOCKBIN}/logger" <<'EOF'
-#!/usr/bin/env bash
-exit 0
-EOF
-    chmod +x "${MOCKBIN}/logger"
     export PATH="${MOCKBIN}:${PATH}"
 }
 
 teardown() {
     rm -rf "${MOCKBIN}" "${LOCK_DIR}" "${LOG_FILE}" 2>/dev/null || true
+    # sandbox_home tests set SANDBOX_HOME; rm here so the fakehome.*
+    # tempdirs don't leak (the per-test trap in sandbox_home doesn't
+    # fire reliably inside bats).
+    [[ -n "${SANDBOX_HOME}" ]] && rm -rf "${SANDBOX_HOME}" 2>/dev/null || true
 }
 
 # --- Mock helpers -----------------------------------------------------------
@@ -519,10 +521,10 @@ EOF
 # watchdog installed would overwrite + then delete the real plist while
 # the operator's launchd still has it loaded.
 sandbox_home() {
-    export HOME="$(mktemp -d "${BATS_TMPDIR}/fakehome.XXXXXX")"
-    # teardown() in this file rm's MOCKBIN/LOCK_DIR/LOG_FILE only — we
-    # need to clean HOME too. Use a per-test trap chained to bats's own.
-    trap 'rm -rf "${HOME}"' EXIT
+    SANDBOX_HOME="$(mktemp -d "${BATS_TMPDIR}/fakehome.XXXXXX")"
+    export HOME="${SANDBOX_HOME}"
+    # The actual cleanup happens in teardown() via SANDBOX_HOME — bats
+    # swallows per-test EXIT traps, so a trap here doesn't fire.
 }
 
 skip_if_no_launchctl() {

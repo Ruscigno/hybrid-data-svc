@@ -14,8 +14,9 @@
     * StartInterval=300 → every 5 min thereafter
 
   Logs:
-    * stdout/stderr captured to /tmp/tv-watchdog.launchd.{out,err}
-    * Unified Logging entries via `logger -t tv-watchdog` from the script
+    * Canonical: /tmp/tv-watchdog.log (file, append-only, ISO 8601 + [run=...])
+    * Mirror:    stdout/stderr captured to /tmp/tv-watchdog.launchd.{out,err}
+  No Unified Logging — macOS `logger` doesn't bridge to ASL on recent builds.
 -->
 <plist version="1.0">
 <dict>
