@@ -47,17 +47,26 @@ def close_pool() -> None:
 
 
 def assert_provider_schema(conninfo: str) -> None:
-    """Fail fast at boot if migration 004 (provider column) is not applied."""
+    """Fail fast at boot unless migration 004 is fully applied — i.e. `provider`
+    is part of the PRIMARY KEY of both `bars` and `cache_meta`. Catches a
+    partially-applied migration (column added but PK not rebuilt), not just a
+    missing column."""
     pool = get_pool(conninfo)
     with pool.connection() as conn:
         rows = conn.execute(
-            "SELECT table_name FROM information_schema.columns "
-            "WHERE table_name IN ('bars','cache_meta') AND column_name='provider'",
+            """SELECT tc.table_name
+                 FROM information_schema.table_constraints tc
+                 JOIN information_schema.key_column_usage kcu
+                   ON tc.constraint_name = kcu.constraint_name
+                  AND tc.table_schema   = kcu.table_schema
+                WHERE tc.constraint_type = 'PRIMARY KEY'
+                  AND tc.table_name IN ('bars', 'cache_meta')
+                  AND kcu.column_name = 'provider'""",
         ).fetchall()
     have = {r[0] for r in rows}
     missing = {"bars", "cache_meta"} - have
     if missing:
         raise RuntimeError(
-            f"schema out of date: {sorted(missing)} missing the 'provider' column. "
-            "Apply migrations/004_provider.sql before starting this service."
+            f"schema out of date: {sorted(missing)} missing 'provider' in their "
+            "PRIMARY KEY. Apply migrations/004_provider.sql before starting this service."
         )
