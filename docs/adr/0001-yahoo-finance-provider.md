@@ -38,8 +38,9 @@ gRPC + REST surface, without disturbing the TradingView path.
 
 From the design conversation (these are fixed inputs, not decisions):
 
-1. **Universe:** top **1,000 stocks by market cap per exchange** (NYSE, NASDAQ, NYSE
-   American), **3,000 overall cap**. Common stocks (no ETFs in the auto-seed).
+1. **Universe:** top **1,500 by market cap per exchange** (NYSE, NASDAQ, NYSE American),
+   **4,500 overall cap**. Pool includes **common stocks and ETFs** (ETFs ranked by net
+   assets). Well within the probe's ~12k-symbol capacity.
 2. **Cadence & shape:** fetch **1-min data every 15 min**; **aggregate** to all timeframes:
    `1min, 5min, 15min, 30min, 1h, 2h, 4h, 8h, 1d, 3d, 1w, 1mo`.
 3. **Backfill:** as far back as Yahoo serves 1-min (commonly ~30 days).
@@ -165,20 +166,24 @@ distributed coordination. Browser TLS impersonation is **mandatory** (probe find
 - (−) Correctness of the global limit depends on the single-instance assumption; running two
    Yahoo writers would double the effective rate (documented constraint).
 
-### D7 — Universe = top-1,000 by market cap per exchange, via the NASDAQ screener API
+### D7 — Universe = top-1,500 per exchange (stocks + ETFs) by size, via the NASDAQ screener API
 
 The Nasdaq Trader **symbol directory** (used by the probe's `build_symbols.py`) has **no
 market-cap field**, so ranking needs a different source. A `build_catalog.py` generator uses
-the **NASDAQ screener API** (`api.nasdaq.com/api/screener/stocks`, returns symbol + exchange +
-marketCap, sortable), takes the **top 1,000 by market cap per exchange** (NASDAQ, NYSE, AMEX),
-caps at **3,000**, validates each against Yahoo, and seeds `assets` + one `feeds` row each
-(`provider='yahoo'`, `status='pending'`).
+the **NASDAQ screener API** — the stock screener (`api.nasdaq.com/api/screener/stocks`) **and**
+the ETF screener (`/api/screener/etf`), each returning symbol + exchange + a size field
+(market cap for stocks, net assets for ETFs). It merges both per exchange, takes the **top
+1,500 by size per exchange** (NASDAQ, NYSE, AMEX) as a **combined stock+ETF ranking**, caps at
+**4,500**, validates each against Yahoo, and seeds `assets` (`asset_class='EQUITY'` or
+`'ETF'`) + one `feeds` row each (`provider='yahoo'`, `status='pending'`).
 
 **Consequences**
-- (+) Real market-cap ranking; re-runnable to refresh membership as caps drift.
-- (−) Another **undocumented endpoint** (curl_cffi again; tolerate schema/availability
-   changes). Membership is a **point-in-time snapshot**; refresh cadence is operational
-   (e.g. re-run monthly), not automatic.
+- (+) Real size-based ranking across stocks and ETFs; re-runnable to refresh membership as
+   caps/AUM drift.
+- (−) Two **undocumented endpoints** (curl_cffi again; tolerate schema/availability changes).
+   Ranking mixes market cap (stocks) and net assets (ETFs) — both "size" proxies but not
+   identical; acceptable for a coverage cut, not a precise ordering. Membership is a
+   **point-in-time snapshot**; refresh cadence is operational (e.g. re-run monthly).
 
 ### D8 — Stock-specific lightweight validation (do not reuse the crypto/TV guards)
 
@@ -261,7 +266,7 @@ Tracer-bullet first; each phase is independently shippable and testable.
    precedence/override + `provider` API field. *Provable with existing data; no Yahoo code.*
 2. **Yahoo vertical (1 symbol)** — provider module + writer + aggregation, AAPL end-to-end.
 3. **Backfill** — ~30-day 1-min on onboarding, chunked ≤ 8 days/request.
-4. **Catalog at scale** — screener generator + ramp to 3,000.
+4. **Catalog at scale** — screener generator + ramp to 4,500.
 5. **Ops/polish** — compose service, status surfacing, metrics, docs.
 
 ## Consequences (overall)
@@ -285,5 +290,7 @@ Tracer-bullet first; each phase is independently shippable and testable.
 - **Catalog refresh cadence** — manual re-run vs scheduled; default manual for now.
 - **Aggregation anchors for `8h`/`3d`** — exact fixed-anchor definition deferred to the
   implementation spec.
-- **Soak outcome** — if the 24h soak surfaces a daily cap below our projected ~288k req/day,
-  `YAHOO_RPM` / cadence get tuned down; the architecture is unaffected.
+- **Soak outcome** — if the 24h soak surfaces a daily cap below our projected ~432k req/day
+  (4,500 symbols × 96 cycles), `YAHOO_RPM` / cadence get tuned down; the architecture is
+  unaffected. (At 20 rps a 4,500-symbol burst drains in ~3.75 min, well inside the 15-min
+  cycle.)
