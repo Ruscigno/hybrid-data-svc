@@ -7,8 +7,8 @@ ALTER TABLE bars ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'tradin
 ALTER TABLE bars DROP CONSTRAINT IF EXISTS bars_pkey;
 ALTER TABLE bars ADD PRIMARY KEY (symbol, timeframe, provider, ts);
 DROP INDEX IF EXISTS idx_bars_symbol_tf_ts;
-CREATE INDEX IF NOT EXISTS idx_bars_symbol_tf_provider_ts
-    ON bars (symbol, timeframe, provider, ts DESC);
+-- No separate index needed: the PK (symbol, timeframe, provider, ts) already
+-- serves ORDER BY ts DESC via a backward index scan.
 
 -- cache_meta ----------------------------------------------------------------
 ALTER TABLE cache_meta ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'tradingview';
