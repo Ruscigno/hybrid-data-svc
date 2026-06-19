@@ -159,8 +159,9 @@ class BarCache:
         meta = self._get_meta(symbol, timeframe)
         return meta["last_bar_ts"] if meta else None
 
-    def bar_count(self, symbol: str, timeframe: str) -> int:
-        meta = self._get_meta(symbol, timeframe)
+    def bar_count(self, symbol: str, timeframe: str,
+                  provider: str = "tradingview") -> int:
+        meta = self._get_meta(symbol, timeframe, provider)
         return int(meta["bar_count"]) if meta else 0
 
     def latest_bar(self, symbol: str, timeframe: str) -> Optional[dict]:
@@ -242,12 +243,13 @@ class BarCache:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_meta(self, symbol: str, timeframe: str) -> Optional[dict]:
+    def _get_meta(self, symbol: str, timeframe: str,
+                  provider: str = "tradingview") -> Optional[dict]:
         with self._pool.connection() as conn:
             row = conn.execute(
                 "SELECT last_bar_ts, bar_count, last_fetched_at "
-                "FROM cache_meta WHERE symbol=%s AND timeframe=%s",
-                (symbol, timeframe),
+                "FROM cache_meta WHERE symbol=%s AND timeframe=%s AND provider=%s",
+                (symbol, timeframe, provider),
             ).fetchone()
         if row is None:
             return None
@@ -307,16 +309,18 @@ class BarCache:
                 )
         logger.info("[cache] invalidated %s/%s", symbol, timeframe)
 
-    def _last_close(self, symbol: str, timeframe: str) -> Optional[float]:
+    def _last_close(self, symbol: str, timeframe: str,
+                    provider: str = "tradingview") -> Optional[float]:
         with self._pool.connection() as conn:
             row = conn.execute(
-                "SELECT close FROM bars WHERE symbol=%s AND timeframe=%s "
+                "SELECT close FROM bars WHERE symbol=%s AND timeframe=%s AND provider=%s "
                 "ORDER BY ts DESC LIMIT 1",
-                (symbol, timeframe),
+                (symbol, timeframe, provider),
             ).fetchone()
         return float(row[0]) if row else None
 
-    def _insert_bars(self, df: pd.DataFrame, symbol: str, timeframe: str) -> None:
+    def _insert_bars(self, df: pd.DataFrame, symbol: str, timeframe: str,
+                     provider: str = "tradingview") -> None:
         bar_secs = _tf_seconds(timeframe)
         now = int(time.time())
         closed_df = df[df["time"].astype(int) + bar_secs <= now]
@@ -335,7 +339,7 @@ class BarCache:
             return
 
         # Cross-symbol leak guard, layer 2 — relative drift vs last cached.
-        last_close = self._last_close(symbol, timeframe)
+        last_close = self._last_close(symbol, timeframe, provider)
         if last_close is not None and last_close > 0:
             fresh_close = float(closed_df.iloc[-1]["close"])
             drift = abs(fresh_close - last_close) / last_close
@@ -366,7 +370,7 @@ class BarCache:
 
         rows = [
             (
-                symbol, timeframe,
+                symbol, timeframe, provider,
                 int(row["time"]),
                 float(row["open"]), float(row["high"]),
                 float(row["low"]),  float(row["close"]),
@@ -381,9 +385,9 @@ class BarCache:
                 with conn.cursor() as cur:
                     cur.executemany(
                         """INSERT INTO bars
-                             (symbol, timeframe, ts, open, high, low, close, volume, fetched_at)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON CONFLICT (symbol, timeframe, ts) DO UPDATE SET
+                             (symbol, timeframe, provider, ts, open, high, low, close, volume, fetched_at)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                           ON CONFLICT (symbol, timeframe, provider, ts) DO UPDATE SET
                              open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
                              close=EXCLUDED.close, volume=EXCLUDED.volume,
                              fetched_at=EXCLUDED.fetched_at""",
@@ -392,18 +396,19 @@ class BarCache:
                     last_ts = int(closed_df["time"].max())
                     cur.execute(
                         """INSERT INTO cache_meta
-                             (symbol, timeframe, last_bar_ts, bar_count, last_fetched_at)
+                             (symbol, timeframe, provider, last_bar_ts, bar_count, last_fetched_at)
                            VALUES (
-                             %s, %s,
+                             %s, %s, %s,
                              %s,
-                             (SELECT COUNT(*) FROM bars WHERE symbol=%s AND timeframe=%s),
+                             (SELECT COUNT(*) FROM bars
+                                WHERE symbol=%s AND timeframe=%s AND provider=%s),
                              %s
                            )
-                           ON CONFLICT (symbol, timeframe) DO UPDATE SET
+                           ON CONFLICT (symbol, timeframe, provider) DO UPDATE SET
                              last_bar_ts=EXCLUDED.last_bar_ts,
                              bar_count=EXCLUDED.bar_count,
                              last_fetched_at=EXCLUDED.last_fetched_at""",
-                        (symbol, timeframe, last_ts, symbol, timeframe, now),
+                        (symbol, timeframe, provider, last_ts, symbol, timeframe, provider, now),
                     )
 
     def _read_bars(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
