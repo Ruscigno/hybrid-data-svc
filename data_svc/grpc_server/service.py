@@ -32,6 +32,7 @@ class BarServiceServicer(_pb_grpc.BarServiceServicer):
             return self._cache.resolve_provider(symbol, timeframe, requested)
         except ValueError as exc:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+            raise  # unreachable: abort() raises — re-raise so we never return None
 
     def GetRecentBars(self, request, context):  # noqa: N802 (gRPC naming)
         symbol = request.symbol

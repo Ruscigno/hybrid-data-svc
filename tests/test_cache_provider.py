@@ -47,3 +47,9 @@ def test_resolve_provider_rejects_unknown(pg_url, reset_db) -> None:
     cache = BarCache(pg_url)
     with pytest.raises(ValueError, match="unknown provider"):
         cache.resolve_provider("AAA", "1h", "bogus")
+
+
+def test_assert_provider_schema_passes_on_migrated_db(pg_url: str) -> None:
+    """The boot guard accepts a fully-migrated schema (004 applied by conftest)."""
+    from data_svc.db.postgres import assert_provider_schema
+    assert_provider_schema(pg_url)  # must not raise
