@@ -44,3 +44,20 @@ def close_pool() -> None:
         if _pool is not None:
             _pool.close()
             _pool = None
+
+
+def assert_provider_schema(conninfo: str) -> None:
+    """Fail fast at boot if migration 004 (provider column) is not applied."""
+    pool = get_pool(conninfo)
+    with pool.connection() as conn:
+        rows = conn.execute(
+            "SELECT table_name FROM information_schema.columns "
+            "WHERE table_name IN ('bars','cache_meta') AND column_name='provider'",
+        ).fetchall()
+    have = {r[0] for r in rows}
+    missing = {"bars", "cache_meta"} - have
+    if missing:
+        raise RuntimeError(
+            f"schema out of date: {sorted(missing)} missing the 'provider' column. "
+            "Apply migrations/004_provider.sql before starting this service."
+        )
