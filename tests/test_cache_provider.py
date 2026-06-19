@@ -1,4 +1,7 @@
+"""Tests for provider-scoped BarCache reads and resolve_provider logic."""
 from __future__ import annotations
+
+import pytest
 
 from data_svc.db.cache import BarCache
 
@@ -38,3 +41,9 @@ def test_resolve_provider_precedence(pg_url, reset_db, seed_bar):
     assert cache.resolve_provider("AAA", "1h", "yahoo") == "yahoo"
     # Nothing present -> default to the first precedence entry.
     assert cache.resolve_provider("ZZZ", "1h", "") == "tradingview"
+
+
+def test_resolve_provider_rejects_unknown(pg_url, reset_db) -> None:
+    cache = BarCache(pg_url)
+    with pytest.raises(ValueError, match="unknown provider"):
+        cache.resolve_provider("AAA", "1h", "bogus")

@@ -27,11 +27,17 @@ class BarServiceServicer(_pb_grpc.BarServiceServicer):
         self._cache = cache
         self._postgres_url = postgres_url
 
+    def _resolve(self, symbol: str, timeframe: str, requested: str, context) -> str:
+        try:
+            return self._cache.resolve_provider(symbol, timeframe, requested)
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+
     def GetRecentBars(self, request, context):  # noqa: N802 (gRPC naming)
         symbol = request.symbol
         timeframe = request.timeframe
         count = max(1, min(int(request.count or 300), _MAX_BARS))
-        provider = self._cache.resolve_provider(symbol, timeframe, request.provider)
+        provider = self._resolve(symbol, timeframe, request.provider, context)
 
         df = self._cache.read_bars(symbol, timeframe, count, provider)
         bars = [
@@ -54,7 +60,7 @@ class BarServiceServicer(_pb_grpc.BarServiceServicer):
         to_ts = int(request.to_ts)
         requested = int(request.limit) if request.limit else _DEFAULT_RANGE_LIMIT
         limit = max(1, min(requested, _MAX_BARS))
-        provider = self._cache.resolve_provider(symbol, timeframe, request.provider)
+        provider = self._resolve(symbol, timeframe, request.provider, context)
 
         rows, truncated = self._cache.get_bars_in_range(symbol, timeframe, from_ts, to_ts, limit, provider)
         bars = [
@@ -74,7 +80,7 @@ class BarServiceServicer(_pb_grpc.BarServiceServicer):
         symbol = request.symbol
         timeframe = request.timeframe
         min_bars = int(request.min_bars or 200)
-        provider = self._cache.resolve_provider(symbol, timeframe, request.provider)
+        provider = self._resolve(symbol, timeframe, request.provider, context)
 
         count = self._cache.bar_count(symbol, timeframe, provider)
         last_ts = self._cache.latest_bar_ts(symbol, timeframe, provider) or 0

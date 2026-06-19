@@ -162,6 +162,11 @@ class BarCache:
         in PROVIDER_PRECEDENCE that has inventory in cache_meta; if none do,
         fall back to the first precedence entry (an empty read)."""
         if requested:
+            if requested not in PROVIDER_PRECEDENCE:
+                raise ValueError(
+                    f"unknown provider {requested!r}; "
+                    f"valid: {', '.join(PROVIDER_PRECEDENCE)}"
+                )
             return requested
         with self._pool.connection() as conn:
             rows = conn.execute(
