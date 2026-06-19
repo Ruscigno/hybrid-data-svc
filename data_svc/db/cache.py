@@ -291,6 +291,7 @@ class BarCache:
         timeframe: str,
         last_bar_ts: int,
         fresh: pd.DataFrame,
+        provider: str = "tradingview",
     ) -> bool:
         overlap_fresh = fresh[fresh["time"] == last_bar_ts]
         if overlap_fresh.empty:
@@ -301,8 +302,8 @@ class BarCache:
 
         with self._pool.connection() as conn:
             row = conn.execute(
-                "SELECT close FROM bars WHERE symbol=%s AND timeframe=%s AND ts=%s",
-                (symbol, timeframe, int(last_bar_ts)),
+                "SELECT close FROM bars WHERE symbol=%s AND timeframe=%s AND provider=%s AND ts=%s",
+                (symbol, timeframe, provider, int(last_bar_ts)),
             ).fetchone()
 
         if row is None:
