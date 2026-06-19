@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 OVERLAP_TOLERANCE = 0.00001  # 0.001 %
 
-PROVIDER_PRECEDENCE = ("tradingview", "yahoo")
+from .providers import PROVIDER_PRECEDENCE, DEFAULT_PROVIDER
 
 INSERT_DRIFT_REJECT = 0.5
 
@@ -158,9 +158,14 @@ class BarCache:
                          requested: str = "") -> str:
         """Pick the provider to serve for (symbol, timeframe).
 
-        Explicit `requested` always wins. Otherwise return the first provider
-        in PROVIDER_PRECEDENCE that has inventory in cache_meta; if none do,
-        fall back to the first precedence entry (an empty read)."""
+        A *valid* explicit `requested` provider wins; an unrecognized one (not
+        in PROVIDER_PRECEDENCE) is rejected. With no `requested`, return the
+        first provider in PROVIDER_PRECEDENCE that has inventory in cache_meta;
+        if none do, fall back to DEFAULT_PROVIDER (yielding an empty read).
+
+        Raises:
+            ValueError: if `requested` is non-empty and not in PROVIDER_PRECEDENCE.
+        """
         if requested:
             if requested not in PROVIDER_PRECEDENCE:
                 raise ValueError(
@@ -177,24 +182,24 @@ class BarCache:
         for p in PROVIDER_PRECEDENCE:
             if p in present:
                 return p
-        return PROVIDER_PRECEDENCE[0]
+        return DEFAULT_PROVIDER
 
     def read_bars(self, symbol: str, timeframe: str, count: int,
-                  provider: str = "tradingview") -> pd.DataFrame:
+                  provider: str = DEFAULT_PROVIDER) -> pd.DataFrame:
         return self._read_bars(symbol, timeframe, count, provider)
 
     def latest_bar_ts(self, symbol: str, timeframe: str,
-                      provider: str = "tradingview") -> Optional[int]:
+                      provider: str = DEFAULT_PROVIDER) -> Optional[int]:
         meta = self._get_meta(symbol, timeframe, provider)
         return meta["last_bar_ts"] if meta else None
 
     def bar_count(self, symbol: str, timeframe: str,
-                  provider: str = "tradingview") -> int:
+                  provider: str = DEFAULT_PROVIDER) -> int:
         meta = self._get_meta(symbol, timeframe, provider)
         return int(meta["bar_count"]) if meta else 0
 
     def latest_bar(self, symbol: str, timeframe: str,
-                   provider: str = "tradingview") -> Optional[dict]:
+                   provider: str = DEFAULT_PROVIDER) -> Optional[dict]:
         """Return the most recent bar's full OHLCV row, or None if no bars.
 
         Used by the REST /v1/quote path (and any future gRPC quote RPC).
@@ -227,7 +232,7 @@ class BarCache:
         from_ts: int,
         to_ts: int,
         limit: int,
-        provider: str = "tradingview",
+        provider: str = DEFAULT_PROVIDER,
     ) -> tuple[list[dict], bool]:
         """Return (rows, truncated) for the given closed-time range.
 
@@ -275,7 +280,7 @@ class BarCache:
     # ------------------------------------------------------------------
 
     def _get_meta(self, symbol: str, timeframe: str,
-                  provider: str = "tradingview") -> Optional[dict]:
+                  provider: str = DEFAULT_PROVIDER) -> Optional[dict]:
         with self._pool.connection() as conn:
             row = conn.execute(
                 "SELECT last_bar_ts, bar_count, last_fetched_at "
@@ -296,7 +301,7 @@ class BarCache:
         timeframe: str,
         last_bar_ts: int,
         fresh: pd.DataFrame,
-        provider: str = "tradingview",
+        provider: str = DEFAULT_PROVIDER,
     ) -> bool:
         overlap_fresh = fresh[fresh["time"] == last_bar_ts]
         if overlap_fresh.empty:
@@ -329,7 +334,7 @@ class BarCache:
         return True
 
     def _invalidate(self, symbol: str, timeframe: str,
-                    provider: str = "tradingview") -> None:
+                    provider: str = DEFAULT_PROVIDER) -> None:
         with self._pool.connection() as conn:
             with conn.transaction():
                 conn.execute(
@@ -343,7 +348,7 @@ class BarCache:
         logger.info("[cache] invalidated %s/%s/%s", symbol, timeframe, provider)
 
     def _last_close(self, symbol: str, timeframe: str,
-                    provider: str = "tradingview") -> Optional[float]:
+                    provider: str = DEFAULT_PROVIDER) -> Optional[float]:
         with self._pool.connection() as conn:
             row = conn.execute(
                 "SELECT close FROM bars WHERE symbol=%s AND timeframe=%s AND provider=%s "
@@ -353,7 +358,7 @@ class BarCache:
         return float(row[0]) if row else None
 
     def _insert_bars(self, df: pd.DataFrame, symbol: str, timeframe: str,
-                     provider: str = "tradingview") -> None:
+                     provider: str = DEFAULT_PROVIDER) -> None:
         bar_secs = _tf_seconds(timeframe)
         now = int(time.time())
         closed_df = df[df["time"].astype(int) + bar_secs <= now]
@@ -445,7 +450,7 @@ class BarCache:
                     )
 
     def _read_bars(self, symbol: str, timeframe: str, count: int,
-                   provider: str = "tradingview") -> pd.DataFrame:
+                   provider: str = DEFAULT_PROVIDER) -> pd.DataFrame:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(

@@ -9,6 +9,7 @@ import os
 import sys
 
 from .db.postgres import get_pool
+from .db.providers import DEFAULT_PROVIDER
 
 
 def main() -> int:
@@ -22,7 +23,7 @@ def main() -> int:
             row = conn.execute(
                 "SELECT bar_count FROM cache_meta "
                 "WHERE symbol=%s AND timeframe=%s AND provider=%s",
-                (sym, tf, "tradingview"),
+                (sym, tf, DEFAULT_PROVIDER),
             ).fetchone()
         return 0 if row and int(row[0]) >= 200 else 1
     except Exception:
