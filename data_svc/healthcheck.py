@@ -20,8 +20,9 @@ def main() -> int:
         pool = get_pool(pg_url, max_size=2)
         with pool.connection() as conn:
             row = conn.execute(
-                "SELECT bar_count FROM cache_meta WHERE symbol=%s AND timeframe=%s",
-                (sym, tf),
+                "SELECT bar_count FROM cache_meta "
+                "WHERE symbol=%s AND timeframe=%s AND provider=%s",
+                (sym, tf, "tradingview"),
             ).fetchone()
         return 0 if row and int(row[0]) >= 200 else 1
     except Exception:
