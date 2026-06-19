@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 OVERLAP_TOLERANCE = 0.00001  # 0.001 %
 
+PROVIDER_PRECEDENCE = ("tradingview", "yahoo")
+
 INSERT_DRIFT_REJECT = 0.5
 
 PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {
@@ -152,11 +154,33 @@ class BarCache:
     def invalidate(self, symbol: str, timeframe: str) -> None:
         self._invalidate(symbol, timeframe)
 
-    def read_bars(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
-        return self._read_bars(symbol, timeframe, count)
+    def resolve_provider(self, symbol: str, timeframe: str,
+                         requested: str = "") -> str:
+        """Pick the provider to serve for (symbol, timeframe).
 
-    def latest_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
-        meta = self._get_meta(symbol, timeframe)
+        Explicit `requested` always wins. Otherwise return the first provider
+        in PROVIDER_PRECEDENCE that has inventory in cache_meta; if none do,
+        fall back to the first precedence entry (an empty read)."""
+        if requested:
+            return requested
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT provider FROM cache_meta WHERE symbol=%s AND timeframe=%s",
+                (symbol, timeframe),
+            ).fetchall()
+        present = {r[0] for r in rows}
+        for p in PROVIDER_PRECEDENCE:
+            if p in present:
+                return p
+        return PROVIDER_PRECEDENCE[0]
+
+    def read_bars(self, symbol: str, timeframe: str, count: int,
+                  provider: str = "tradingview") -> pd.DataFrame:
+        return self._read_bars(symbol, timeframe, count, provider)
+
+    def latest_bar_ts(self, symbol: str, timeframe: str,
+                      provider: str = "tradingview") -> Optional[int]:
+        meta = self._get_meta(symbol, timeframe, provider)
         return meta["last_bar_ts"] if meta else None
 
     def bar_count(self, symbol: str, timeframe: str,
@@ -164,7 +188,8 @@ class BarCache:
         meta = self._get_meta(symbol, timeframe, provider)
         return int(meta["bar_count"]) if meta else 0
 
-    def latest_bar(self, symbol: str, timeframe: str) -> Optional[dict]:
+    def latest_bar(self, symbol: str, timeframe: str,
+                   provider: str = "tradingview") -> Optional[dict]:
         """Return the most recent bar's full OHLCV row, or None if no bars.
 
         Used by the REST /v1/quote path (and any future gRPC quote RPC).
@@ -174,10 +199,10 @@ class BarCache:
             row = conn.execute(
                 """SELECT ts, open, high, low, close, volume
                      FROM bars
-                    WHERE symbol=%s AND timeframe=%s
+                    WHERE symbol=%s AND timeframe=%s AND provider=%s
                     ORDER BY ts DESC
                     LIMIT 1""",
-                (symbol, timeframe),
+                (symbol, timeframe, provider),
             ).fetchone()
         if row is None:
             return None
@@ -197,6 +222,7 @@ class BarCache:
         from_ts: int,
         to_ts: int,
         limit: int,
+        provider: str = "tradingview",
     ) -> tuple[list[dict], bool]:
         """Return (rows, truncated) for the given closed-time range.
 
@@ -213,11 +239,11 @@ class BarCache:
                 cur.execute(
                     """SELECT ts, open, high, low, close, volume
                          FROM bars
-                        WHERE symbol=%s AND timeframe=%s
+                        WHERE symbol=%s AND timeframe=%s AND provider=%s
                           AND ts BETWEEN %s AND %s
                         ORDER BY ts DESC
                         LIMIT %s""",
-                    (symbol, timeframe, int(from_ts), int(to_ts), int(limit) + 1),
+                    (symbol, timeframe, provider, int(from_ts), int(to_ts), int(limit) + 1),
                 )
                 rows = cur.fetchall()
         truncated = len(rows) > limit
@@ -296,18 +322,19 @@ class BarCache:
 
         return True
 
-    def _invalidate(self, symbol: str, timeframe: str) -> None:
+    def _invalidate(self, symbol: str, timeframe: str,
+                    provider: str = "tradingview") -> None:
         with self._pool.connection() as conn:
             with conn.transaction():
                 conn.execute(
-                    "DELETE FROM bars WHERE symbol=%s AND timeframe=%s",
-                    (symbol, timeframe),
+                    "DELETE FROM bars WHERE symbol=%s AND timeframe=%s AND provider=%s",
+                    (symbol, timeframe, provider),
                 )
                 conn.execute(
-                    "DELETE FROM cache_meta WHERE symbol=%s AND timeframe=%s",
-                    (symbol, timeframe),
+                    "DELETE FROM cache_meta WHERE symbol=%s AND timeframe=%s AND provider=%s",
+                    (symbol, timeframe, provider),
                 )
-        logger.info("[cache] invalidated %s/%s", symbol, timeframe)
+        logger.info("[cache] invalidated %s/%s/%s", symbol, timeframe, provider)
 
     def _last_close(self, symbol: str, timeframe: str,
                     provider: str = "tradingview") -> Optional[float]:
@@ -411,16 +438,17 @@ class BarCache:
                         (symbol, timeframe, provider, last_ts, symbol, timeframe, provider, now),
                     )
 
-    def _read_bars(self, symbol: str, timeframe: str, count: int) -> pd.DataFrame:
+    def _read_bars(self, symbol: str, timeframe: str, count: int,
+                   provider: str = "tradingview") -> pd.DataFrame:
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT ts, open, high, low, close, volume
                          FROM bars
-                        WHERE symbol=%s AND timeframe=%s
+                        WHERE symbol=%s AND timeframe=%s AND provider=%s
                         ORDER BY ts DESC
                         LIMIT %s""",
-                    (symbol, timeframe, int(count)),
+                    (symbol, timeframe, provider, int(count)),
                 )
                 rows = cur.fetchall()
         if not rows:
