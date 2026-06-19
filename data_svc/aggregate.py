@@ -2,8 +2,8 @@
 
 Pure function of its input: no clock, no DB, no network. Intraday timeframes
 bucket by fixed UTC second-windows; daily-and-up bucket by the US/Eastern
-trading-session calendar (added in a later task). The most-recent bucket may be
-partial — the writer re-runs this each cycle and upserts idempotently.
+trading-session calendar. The most-recent bucket may be partial — the writer
+re-runs this each cycle and upserts idempotently.
 """
 from __future__ import annotations
 
