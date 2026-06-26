@@ -127,3 +127,58 @@ class TestParseChartErrorPayload:
 
         assert list(df.columns) == EXPECTED_COLUMNS
         assert len(df) == 0
+
+
+class TestParseChartRaggedPayload:
+    """R2: ragged (mismatched-length) arrays must return empty df — never raise."""
+
+    def test_ragged_timestamps_vs_ohlcv_returns_empty_df(self):
+        """timestamps has 3 elements but OHLCV arrays have 2 -> empty df, no raise."""
+        payload = _make_payload(
+            timestamps=[1_700_000_000, 1_700_000_060, 1_700_000_120],  # 3
+            opens=[100.0, 101.0],   # 2
+            highs=[105.0, 106.0],   # 2
+            lows=[99.0, 100.0],     # 2
+            closes=[104.0, 105.0],  # 2
+            volumes=[1000, 2000],   # 2
+        )
+
+        df = parse_chart(payload)
+
+        assert list(df.columns) == EXPECTED_COLUMNS
+        assert len(df) == 0
+
+    def test_ragged_volume_vs_prices_returns_empty_df(self):
+        """volume list is shorter than other arrays -> empty df, no raise."""
+        payload = _make_payload(
+            timestamps=[1_700_000_000, 1_700_000_060],
+            opens=[100.0, 101.0],
+            highs=[105.0, 106.0],
+            lows=[99.0, 100.0],
+            closes=[104.0, 105.0],
+            volumes=[1000],  # only 1 element, others have 2
+        )
+
+        df = parse_chart(payload)
+
+        assert list(df.columns) == EXPECTED_COLUMNS
+        assert len(df) == 0
+
+    def test_ragged_does_not_raise(self):
+        """parse_chart with ragged arrays must not raise any exception."""
+        payload = _make_payload(
+            timestamps=[1_700_000_000, 1_700_000_060, 1_700_000_120],
+            opens=[100.0],
+            highs=[105.0, 106.0],
+            lows=[99.0],
+            closes=[104.0, 105.0],
+            volumes=[1000, 2000],
+        )
+
+        # Must not raise
+        try:
+            result = parse_chart(payload)
+        except Exception as exc:
+            pytest.fail(f"parse_chart raised unexpectedly: {exc}")
+
+        assert list(result.columns) == EXPECTED_COLUMNS

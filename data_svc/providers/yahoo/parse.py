@@ -48,16 +48,25 @@ def parse_chart(payload: dict | None) -> pd.DataFrame:
     except (KeyError, IndexError, TypeError):
         return _empty()
 
-    df = pd.DataFrame(
-        {
-            "time": timestamps,
-            "open": opens,
-            "high": highs,
-            "low": lows,
-            "close": closes,
-            "volume": volumes,
-        }
-    )
+    # Guard against ragged arrays — all lists must have equal length.
+    # Also catches the ValueError pandas raises for mismatched-length arrays.
+    lengths = {len(arr) for arr in (timestamps, opens, highs, lows, closes, volumes)}
+    if len(lengths) != 1:
+        return _empty()
+
+    try:
+        df = pd.DataFrame(
+            {
+                "time": timestamps,
+                "open": opens,
+                "high": highs,
+                "low": lows,
+                "close": closes,
+                "volume": volumes,
+            }
+        )
+    except ValueError:
+        return _empty()
 
     # Drop rows where any price column is null
     df = df.dropna(subset=["open", "high", "low", "close"])
