@@ -22,28 +22,32 @@ class Bar(_message.Message):
     def __init__(self, ts: _Optional[int] = ..., open: _Optional[float] = ..., high: _Optional[float] = ..., low: _Optional[float] = ..., close: _Optional[float] = ..., volume: _Optional[float] = ...) -> None: ...
 
 class GetRecentBarsRequest(_message.Message):
-    __slots__ = ("symbol", "timeframe", "count")
+    __slots__ = ("symbol", "timeframe", "count", "provider")
     SYMBOL_FIELD_NUMBER: _ClassVar[int]
     TIMEFRAME_FIELD_NUMBER: _ClassVar[int]
     COUNT_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
     symbol: str
     timeframe: str
     count: int
-    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., count: _Optional[int] = ...) -> None: ...
+    provider: str
+    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., count: _Optional[int] = ..., provider: _Optional[str] = ...) -> None: ...
 
 class GetBarsInRangeRequest(_message.Message):
-    __slots__ = ("symbol", "timeframe", "from_ts", "to_ts", "limit")
+    __slots__ = ("symbol", "timeframe", "from_ts", "to_ts", "limit", "provider")
     SYMBOL_FIELD_NUMBER: _ClassVar[int]
     TIMEFRAME_FIELD_NUMBER: _ClassVar[int]
     FROM_TS_FIELD_NUMBER: _ClassVar[int]
     TO_TS_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
     symbol: str
     timeframe: str
     from_ts: int
     to_ts: int
     limit: int
-    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., from_ts: _Optional[int] = ..., to_ts: _Optional[int] = ..., limit: _Optional[int] = ...) -> None: ...
+    provider: str
+    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., from_ts: _Optional[int] = ..., to_ts: _Optional[int] = ..., limit: _Optional[int] = ..., provider: _Optional[str] = ...) -> None: ...
 
 class BarsResponse(_message.Message):
     __slots__ = ("bars", "truncated")
@@ -54,14 +58,16 @@ class BarsResponse(_message.Message):
     def __init__(self, bars: _Optional[_Iterable[_Union[Bar, _Mapping]]] = ..., truncated: bool = ...) -> None: ...
 
 class HealthRequest(_message.Message):
-    __slots__ = ("symbol", "timeframe", "min_bars")
+    __slots__ = ("symbol", "timeframe", "min_bars", "provider")
     SYMBOL_FIELD_NUMBER: _ClassVar[int]
     TIMEFRAME_FIELD_NUMBER: _ClassVar[int]
     MIN_BARS_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
     symbol: str
     timeframe: str
     min_bars: int
-    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., min_bars: _Optional[int] = ...) -> None: ...
+    provider: str
+    def __init__(self, symbol: _Optional[str] = ..., timeframe: _Optional[str] = ..., min_bars: _Optional[int] = ..., provider: _Optional[str] = ...) -> None: ...
 
 class HealthResponse(_message.Message):
     __slots__ = ("ready", "bars_available", "last_bar_ts")

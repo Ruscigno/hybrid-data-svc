@@ -26,6 +26,7 @@ from pathlib import Path
 import grpc
 
 from ..db.assets import AssetsRepo
+from ..db.postgres import assert_provider_schema
 from ..services import assets_loader
 from .assets_service import build_servicer as build_asset_servicer
 from .proto import bars_pb2_grpc as _pb_grpc
@@ -61,6 +62,8 @@ def main() -> None:
         "POSTGRES_URL",
         "postgresql://datasvc:datasvc@postgres:5432/datasvc",
     )
+
+    assert_provider_schema(pg_url)
 
     # Load the curated asset catalog before opening the port — REST routes
     # depend on the assets table being populated. Idempotent upsert.

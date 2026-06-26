@@ -59,6 +59,7 @@ message GetRecentBarsRequest {
   string symbol = 1; // ccxt-style key, e.g. "BTC/USDT:USDT"
   string timeframe = 2; // "15", "30", "1h", "4h", "1D", "1W"
   int32 count = 3; // bars to return (server may cap)
+  string provider = 4; // optional; empty => per-series precedence (TV wins)
 }
 
 message GetBarsInRangeRequest {
@@ -67,6 +68,7 @@ message GetBarsInRangeRequest {
   int64 from_ts = 3; // inclusive epoch seconds
   int64 to_ts = 4; // inclusive epoch seconds
   int32 limit = 5; // 0 or unset -> server default; max 5000
+  string provider = 6; // optional; empty => per-series precedence
 }
 
 message BarsResponse {
@@ -80,6 +82,7 @@ message HealthRequest {
   string symbol = 1;
   string timeframe = 2;
   int32 min_bars = 3;
+  string provider = 4; // optional; empty => per-series precedence
 }
 
 message HealthResponse {

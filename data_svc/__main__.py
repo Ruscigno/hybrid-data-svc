@@ -28,6 +28,7 @@ from typing import Optional
 from .config import DataSvcConfig, Feed
 from .db.audit import audit_integrity, format_audit
 from .db.feeds import FeedRow, FeedsRepo
+from .db.postgres import assert_provider_schema
 from .fetcher import DataFetchError, DataFetcher, bar_secs
 from .services import feeds_loader
 from .tab_pin import TabPinError
@@ -89,6 +90,8 @@ def main() -> None:
         cfg.postgres_url.split("@")[-1] if "@" in cfg.postgres_url else "<redacted>",
         cdp_origin,
     )
+
+    assert_provider_schema(cfg.postgres_url)
 
     # Seed the feeds table from env (idempotent — no-op when rows exist).
     # The DB is the runtime source of truth from here on.

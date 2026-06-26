@@ -482,7 +482,7 @@ def seed_feed(pg_url: str):
 
 @pytest.fixture
 def seed_bar(pg_url: str):
-    """Insert a single bar row directly into the bars table."""
+    """Insert a single bar (+ its cache_meta row) directly into Postgres."""
     import psycopg
 
     def _seed(
@@ -494,6 +494,7 @@ def seed_bar(pg_url: str):
         high: float | None = None,
         low: float | None = None,
         volume: float = 1.0,
+        provider: str = "tradingview",
     ) -> None:
         if open_ is None:
             open_ = close
@@ -504,10 +505,23 @@ def seed_bar(pg_url: str):
         with psycopg.connect(pg_url, autocommit=True) as conn:
             conn.execute(
                 """INSERT INTO bars
-                     (symbol, timeframe, ts, open, high, low, close, volume, fetched_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
-                   ON CONFLICT (symbol, timeframe, ts) DO NOTHING""",
-                (storage_symbol, timeframe, ts, open_, high, low, close, volume),
+                     (symbol, timeframe, provider, ts, open, high, low, close, volume, fetched_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
+                   ON CONFLICT (symbol, timeframe, provider, ts) DO NOTHING""",
+                (storage_symbol, timeframe, provider, ts, open_, high, low, close, volume),
+            )
+            conn.execute(
+                """INSERT INTO cache_meta
+                     (symbol, timeframe, provider, last_bar_ts, bar_count, last_fetched_at)
+                   VALUES (%s, %s, %s, %s,
+                           (SELECT COUNT(*) FROM bars
+                              WHERE symbol=%s AND timeframe=%s AND provider=%s),
+                           EXTRACT(epoch FROM now())::bigint)
+                   ON CONFLICT (symbol, timeframe, provider) DO UPDATE SET
+                     last_bar_ts=GREATEST(cache_meta.last_bar_ts, EXCLUDED.last_bar_ts),
+                     bar_count=EXCLUDED.bar_count,
+                     last_fetched_at=EXCLUDED.last_fetched_at""",
+                (storage_symbol, timeframe, provider, ts, storage_symbol, timeframe, provider),
             )
 
     return _seed
