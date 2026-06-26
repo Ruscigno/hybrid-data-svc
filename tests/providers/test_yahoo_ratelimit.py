@@ -180,3 +180,81 @@ class TestAdaptiveRateLimiterOnSuccess:
 
         positive_sleeps = [s for s in slept if s > 0]
         assert len(positive_sleeps) >= 1
+
+
+class TestAdaptiveRateLimiterNotifyRetryAfter:
+    """R1: notify_retry_after() records a cooldown that acquire() honors."""
+
+    def test_notify_retry_after_causes_cooldown_sleep(self):
+        """notify_retry_after(30) -> next acquire() sleeps >= 30s."""
+        clock = [0.0]
+        slept = []
+
+        def fake_monotonic():
+            return clock[0]
+
+        def fake_sleep(secs):
+            slept.append(secs)
+            clock[0] += secs
+
+        limiter = AdaptiveRateLimiter(rpm=60, monotonic=fake_monotonic)
+        limiter.notify_retry_after(30.0)
+
+        # acquire() should first sleep the cooldown, then pacing (first call = no pacing)
+        limiter.acquire(sleep=fake_sleep)
+
+        assert any(s >= 30.0 for s in slept), f"Expected cooldown sleep >=30s, got {slept}"
+
+    def test_notify_retry_after_cooldown_not_double_applied(self):
+        """Once cooldown expires (after first acquire), second acquire does not re-sleep it."""
+        clock = [0.0]
+        slept = []
+
+        def fake_monotonic():
+            return clock[0]
+
+        def fake_sleep(secs):
+            slept.append(secs)
+            clock[0] += secs
+
+        limiter = AdaptiveRateLimiter(rpm=60, monotonic=fake_monotonic)
+        limiter.notify_retry_after(30.0)
+
+        # First acquire sleeps the cooldown
+        limiter.acquire(sleep=fake_sleep)
+        slept_first = list(slept)
+
+        # Advance clock a bit (simulate time passing)
+        clock[0] += 0.001
+        slept.clear()
+
+        # Second acquire: cooldown is already past, should only sleep normal pacing (~1s at 60rpm)
+        limiter.acquire(sleep=fake_sleep)
+
+        # No sleep >= 30 in second acquire
+        assert not any(s >= 30.0 for s in slept), (
+            f"Cooldown was re-applied on second acquire: {slept}"
+        )
+
+    def test_notify_retry_after_takes_max_of_multiple_calls(self):
+        """Multiple notify_retry_after calls — the longer one governs."""
+        clock = [0.0]
+        slept = []
+
+        def fake_monotonic():
+            return clock[0]
+
+        def fake_sleep(secs):
+            slept.append(secs)
+            clock[0] += secs
+
+        limiter = AdaptiveRateLimiter(rpm=60, monotonic=fake_monotonic)
+        limiter.notify_retry_after(10.0)
+        limiter.notify_retry_after(45.0)
+        limiter.notify_retry_after(20.0)  # should not override 45
+
+        limiter.acquire(sleep=fake_sleep)
+
+        assert any(s >= 45.0 for s in slept), (
+            f"Expected cooldown >= 45s (max of 10/45/20), got {slept}"
+        )

@@ -9,6 +9,7 @@ D12 algorithm:
 from __future__ import annotations
 
 import time
+from typing import Callable
 
 
 class RateLimiter:
@@ -17,7 +18,12 @@ class RateLimiter:
     ``monotonic`` and ``sleep`` are injectable for deterministic testing.
     """
 
-    def __init__(self, rpm: float, *, monotonic=time.monotonic) -> None:
+    def __init__(
+        self,
+        rpm: float,
+        *,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._rpm = float(rpm)
         self._monotonic = monotonic
         self._last_call: float | None = None
@@ -29,7 +35,7 @@ class RateLimiter:
     def set_rpm(self, rpm: float) -> None:
         self._rpm = float(rpm)
 
-    def acquire(self, *, sleep=time.sleep) -> None:
+    def acquire(self, *, sleep: Callable[[float], None] = time.sleep) -> None:
         """Block (via ``sleep``) until the next request slot is available."""
         now = self._monotonic()
         if self._last_call is not None:
@@ -62,22 +68,38 @@ class AdaptiveRateLimiter:
         throttle_factor: float = 0.75,
         restore_step: float = 5.0,
         restore_after: int = 30,
-        monotonic=time.monotonic,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._base_rpm = float(rpm)
         self._floor_rpm = float(floor_rpm)
         self._throttle_factor = throttle_factor
         self._restore_step = float(restore_step)
         self._restore_after = restore_after
+        self._monotonic = monotonic
         self._limiter = RateLimiter(rpm, monotonic=monotonic)
         self._streak: int = 0
+        self._cooldown_until: float = 0.0
 
     @property
     def rpm(self) -> float:
         return self._limiter.rpm
 
-    def acquire(self, *, sleep=time.sleep) -> None:
-        """Delegate to the inner :class:`RateLimiter`."""
+    def notify_retry_after(self, seconds: float) -> None:
+        """Record a Retry-After cooldown.
+
+        The next ``acquire()`` will sleep until the cooldown expires before
+        applying its normal pacing interval.
+        """
+        self._cooldown_until = max(
+            self._cooldown_until, self._monotonic() + seconds
+        )
+
+    def acquire(self, *, sleep: Callable[[float], None] = time.sleep) -> None:
+        """Wait out any active Retry-After cooldown, then delegate to inner limiter."""
+        now = self._monotonic()
+        remaining = self._cooldown_until - now
+        if remaining > 0:
+            sleep(remaining)
         self._limiter.acquire(sleep=sleep)
 
     def on_429(self) -> None:

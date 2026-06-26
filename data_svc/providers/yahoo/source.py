@@ -7,7 +7,7 @@ not on a concrete provider.
 from __future__ import annotations
 
 import abc
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -40,7 +40,7 @@ class Source(abc.ABC):
 _REGISTRY: dict[str, Any] = {}
 
 
-def register_source(name: str, factory) -> None:
+def register_source(name: str, factory: Callable[..., "Source"]) -> None:
     """Register a source factory under ``name``."""
     _REGISTRY[name] = factory
 

@@ -6,14 +6,52 @@ The ``get`` parameter is injectable for pure unit tests (no network required).
 
 from __future__ import annotations
 
+from email.utils import parsedate_to_datetime
+from typing import Callable
+from urllib.parse import quote
+
 import pandas as pd
 
 from .parse import parse_chart
 from .ratelimit import AdaptiveRateLimiter
 
+#: Default fallback when Retry-After is present but unparseable as an integer.
+_RETRY_AFTER_DEFAULT = 60.0
+
 
 class YahooThrottled(Exception):
-    """Raised when Yahoo returns 429 or 999 (soft-block)."""
+    """Raised when Yahoo returns 429 or 999 (soft-block).
+
+    Attributes
+    ----------
+    retry_after:
+        Cooldown duration in seconds parsed from the ``Retry-After`` response
+        header, or ``None`` when the header was absent.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after: float | None = retry_after
+
+
+def _parse_retry_after(value: str) -> float:
+    """Parse a ``Retry-After`` header value into seconds.
+
+    Handles integer seconds and HTTP-date formats. Returns
+    ``_RETRY_AFTER_DEFAULT`` for any value that cannot be parsed.
+    """
+    value = value.strip()
+    try:
+        return float(int(value))
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(value)
+        import time as _time
+        remaining = dt.timestamp() - _time.time()
+        return max(0.0, remaining)
+    except Exception:
+        return _RETRY_AFTER_DEFAULT
 
 
 class YahooClient:
@@ -36,7 +74,7 @@ class YahooClient:
         *,
         impersonate: str = "chrome",
         read_timeout: float = 15.0,
-        get=None,
+        get: Callable[[str, dict], object] | None = None,
     ) -> None:
         self._limiter = limiter
         self._impersonate = impersonate
@@ -69,9 +107,7 @@ class YahooClient:
         :exc:`YahooThrottled`. On 200 calls ``limiter.on_success()`` and returns
         the parsed DataFrame. Any other status / network error is re-raised.
         """
-        host = self.HOSTS[0]
-        url = f"https://{host}/v8/finance/chart/{symbol}"
-
+        encoded_symbol = quote(symbol, safe="")
         params: dict = {"interval": interval}
         if start is not None and end is not None:
             params["period1"] = start
@@ -81,12 +117,32 @@ class YahooClient:
 
         self._limiter.acquire()
 
-        resp = self._get(url, params)
+        last_exc: Exception | None = None
+        resp = None
+        for host in self.HOSTS:
+            url = f"https://{host}/v8/finance/chart/{encoded_symbol}"
+            try:
+                resp = self._get(url, params)
+                break  # host answered — do not failover on HTTP status
+            except Exception as exc:  # network/connection error
+                last_exc = exc
+                resp = None
+
+        if resp is None:
+            # All hosts raised a network error
+            assert last_exc is not None
+            raise last_exc
 
         if resp.status_code in (429, 999):
+            ra_header = (resp.headers or {}).get("Retry-After")
+            retry_after: float | None = None
+            if ra_header is not None:
+                retry_after = _parse_retry_after(ra_header)
+                self._limiter.notify_retry_after(retry_after)
             self._limiter.on_429()
             raise YahooThrottled(
-                f"Yahoo returned {resp.status_code} for {symbol}"
+                f"Yahoo returned {resp.status_code} for {symbol}",
+                retry_after=retry_after,
             )
 
         if resp.status_code == 200:
@@ -94,7 +150,7 @@ class YahooClient:
             return parse_chart(resp.json())
 
         # Other status codes (4xx, 5xx) — propagate without calling on_success
-        resp_text = getattr(resp, "text", "")
+        resp_text = getattr(resp, "text", "")[:200]
         raise RuntimeError(
             f"Yahoo chart request failed: HTTP {resp.status_code} for {symbol}: {resp_text}"
         )

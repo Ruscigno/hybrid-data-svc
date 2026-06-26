@@ -8,6 +8,7 @@ from data_svc.providers.yahoo.source import (
     get_source,
     register_source,
     YahooSource,
+    _REGISTRY,
 )
 from data_svc.providers.yahoo.client import YahooClient
 from data_svc.providers.yahoo.ratelimit import AdaptiveRateLimiter
@@ -61,6 +62,19 @@ def _valid_payload():
             "error": None,
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# R8: Fixture that snapshots and restores _REGISTRY to prevent pollution
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def clean_registry():
+    """Snapshot _REGISTRY before the test and restore it afterwards."""
+    snapshot = dict(_REGISTRY)
+    yield
+    _REGISTRY.clear()
+    _REGISTRY.update(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +180,9 @@ class TestGetSource:
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 1
 
-    def test_register_and_get_custom_source(self):
-        """register_source + get_source round-trip for a custom name."""
+    def test_register_and_get_custom_source(self, clean_registry):
+        """R8: register_source + get_source round-trip for a custom name;
+        _REGISTRY is restored after the test (no pollution)."""
 
         class _DummySource(Source):
             name = "dummy"
