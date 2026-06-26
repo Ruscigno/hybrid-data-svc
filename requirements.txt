@@ -9,3 +9,4 @@ uvicorn[standard]>=0.32
 pydantic>=2.9
 pydantic-settings>=2.5
 tzdata>=2024.1
+curl_cffi>=0.7
