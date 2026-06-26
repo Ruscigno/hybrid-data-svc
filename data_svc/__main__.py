@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 def _feedrow_to_feed(row: FeedRow) -> Feed:
     """Convert the DB row to the Feed NamedTuple the fetcher expects."""
-    return Feed(symbol=row.storage_symbol, timeframe=row.timeframe, tv_symbol=row.tv_symbol)
+    return Feed(symbol=row.storage_symbol, timeframe=row.timeframe, tv_symbol=row.provider_symbol)
 
 
 def _sleep_until_next_event(feeds: list[Feed], fetcher: DataFetcher, fallback_s: float) -> None:
@@ -104,7 +104,7 @@ def main() -> None:
     for row in initial_targets:
         logger.info(
             "  %s/%s  tv=%s  status=%s  bar=%.0fs",
-            row.storage_symbol, row.timeframe, row.tv_symbol, row.status,
+            row.storage_symbol, row.timeframe, row.provider_symbol, row.status,
             bar_secs(row.timeframe),
         )
 
