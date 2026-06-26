@@ -28,13 +28,11 @@ import pandas as pd
 import psycopg
 
 from .postgres import get_pool
+from .providers import DEFAULT_PROVIDER, PROVIDER_PRECEDENCE
 
 logger = logging.getLogger(__name__)
 
 OVERLAP_TOLERANCE = 0.00001  # 0.001 %
-
-from .providers import PROVIDER_PRECEDENCE, DEFAULT_PROVIDER
-
 INSERT_DRIFT_REJECT = 0.5
 
 PLAUSIBLE_RANGES: dict[str, tuple[float, float]] = {

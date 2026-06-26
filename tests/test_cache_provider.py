@@ -53,3 +53,24 @@ def test_assert_provider_schema_passes_on_migrated_db(pg_url: str) -> None:
     """The boot guard accepts a fully-migrated schema (004 applied by conftest)."""
     from data_svc.db.postgres import assert_provider_schema
     assert_provider_schema(pg_url)  # must not raise
+
+
+def test_assert_provider_schema_rejects_when_provider_not_in_pk(pg_url: str, reset_db) -> None:
+    """The guard fails fast when migration 004 isn't fully applied — i.e. `provider`
+    is missing from the PRIMARY KEY (column-existence alone wouldn't catch this).
+    Drops `provider` from cache_meta's PK, asserts the RuntimeError, then restores it."""
+    import psycopg
+
+    from data_svc.db.postgres import assert_provider_schema
+
+    def _set_cache_meta_pk(cols: str) -> None:
+        with psycopg.connect(pg_url, autocommit=True) as conn:
+            conn.execute("ALTER TABLE cache_meta DROP CONSTRAINT cache_meta_pkey")
+            conn.execute(f"ALTER TABLE cache_meta ADD PRIMARY KEY ({cols})")
+
+    _set_cache_meta_pk("symbol, timeframe")  # provider no longer in the PK
+    try:
+        with pytest.raises(RuntimeError, match="provider"):
+            assert_provider_schema(pg_url)
+    finally:
+        _set_cache_meta_pk("symbol, timeframe, provider")  # restore for the rest of the suite
