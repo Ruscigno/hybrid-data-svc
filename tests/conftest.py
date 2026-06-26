@@ -461,20 +461,21 @@ def seed_feed(pg_url: str):
     def _seed(
         storage_symbol: str,
         timeframe: str,
-        tv_symbol: str | None = None,
+        provider_symbol: str | None = None,
         status: str = "pending",
+        provider: str = "tradingview",
     ) -> None:
-        tv = tv_symbol or storage_symbol
+        ps = provider_symbol or storage_symbol
         with psycopg.connect(pg_url, autocommit=True) as conn:
             conn.execute(
                 """INSERT INTO feeds
-                     (storage_symbol, timeframe, tv_symbol, status, updated_at)
-                   VALUES (%s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
-                   ON CONFLICT (storage_symbol, timeframe) DO UPDATE SET
-                     tv_symbol  = EXCLUDED.tv_symbol,
-                     status     = EXCLUDED.status,
-                     updated_at = EXCLUDED.updated_at""",
-                (storage_symbol, timeframe, tv, status),
+                     (storage_symbol, timeframe, provider_symbol, provider, status, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, EXTRACT(epoch FROM now())::bigint)
+                   ON CONFLICT (storage_symbol, timeframe, provider) DO UPDATE SET
+                     provider_symbol = EXCLUDED.provider_symbol,
+                     status          = EXCLUDED.status,
+                     updated_at      = EXCLUDED.updated_at""",
+                (storage_symbol, timeframe, ps, provider, status),
             )
 
     return _seed
