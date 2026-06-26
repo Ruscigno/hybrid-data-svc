@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from data_svc.aggregate import aggregate, base_timeframe
+from data_svc.aggregate import INTRADAY_SECONDS, aggregate, base_timeframe
 
 _COLS = ["time", "open", "high", "low", "close", "volume"]
 
@@ -135,3 +135,31 @@ def test_empty_input_returns_empty_with_columns() -> None:
 def test_unknown_timeframe_raises() -> None:
     with pytest.raises(ValueError):
         aggregate(_df([(0, 1, 1, 1, 1, 1)]), "7m")
+
+
+# ---- every intraday width is exercised (locks the INTRADAY_SECONDS table) ----
+
+@pytest.mark.parametrize("tf,width", sorted(INTRADAY_SECONDS.items(), key=lambda kv: kv[1]))
+def test_intraday_width_boundary(tf: str, width: int) -> None:
+    base = 1_700_000_000 - (1_700_000_000 % width)  # bucket-aligned start
+    df = _df([
+        (base,              10, 10, 10, 10, 1),
+        (base + width - 60, 11, 11, 11, 11, 1),  # still inside the first bucket
+        (base + width,      20, 20, 20, 20, 1),  # opens the next bucket
+    ])
+    out = aggregate(df, tf)
+    assert list(out["time"]) == [base, base + width]
+    assert list(out["close"]) == [11, 20]
+
+
+# ---- daily-derived grouping across a DST boundary (not all fixtures are EST) ----
+
+def test_weekly_handles_dst_boundary() -> None:
+    # Straddle US spring-forward (2024-03-10): Fri 03-08 is EST (09:30 = 14:30 UTC),
+    # Mon 03-11 is EDT (09:30 = 13:30 UTC). Per-timestamp tz conversion must place
+    # them on the correct ET dates -> different ISO weeks -> two distinct bars.
+    fri_mar08 = 1_709_908_200   # 2024-03-08 14:30 UTC
+    mon_mar11 = 1_710_163_800   # 2024-03-11 13:30 UTC
+    df = _df([(fri_mar08, 1, 1, 1, 1, 1), (mon_mar11, 2, 2, 2, 2, 1)])
+    out = aggregate(df, "1W")
+    assert list(out["time"]) == [fri_mar08, mon_mar11]
