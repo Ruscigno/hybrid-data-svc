@@ -211,7 +211,7 @@ def test_post_default_tv_symbol(client, pg_url):
     import psycopg
     with psycopg.connect(pg_url) as conn:
         rows = conn.execute(
-            "SELECT tv_symbol FROM feeds WHERE storage_symbol = %s",
+            "SELECT provider_symbol FROM feeds WHERE storage_symbol = %s",
             ("DOGE/USDT:USDT",),
         ).fetchall()
     assert all(r[0] == "BINANCE:DOGEUSDT" for r in rows)  # default = asset.symbol

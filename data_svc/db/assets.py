@@ -361,9 +361,9 @@ class AssetsRepo:
                 with conn.cursor() as cur:
                     cur.executemany(
                         """INSERT INTO feeds
-                             (storage_symbol, timeframe, tv_symbol, status, updated_at)
-                           VALUES (%s, %s, %s, 'pending', %s)
-                           ON CONFLICT (storage_symbol, timeframe) DO NOTHING""",
+                             (storage_symbol, timeframe, provider_symbol, provider, status, updated_at)
+                           VALUES (%s, %s, %s, 'tradingview', 'pending', %s)
+                           ON CONFLICT (storage_symbol, timeframe, provider) DO NOTHING""",
                         [
                             (asset.storage_symbol, tf, tv_symbol, now)
                             for tf in timeframes
